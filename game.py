@@ -241,7 +241,6 @@ class Phase1Scene(Entity):
         for data in self.player_data:
             if os.path.exists(data['temp_file']):
                 os.remove(data['temp_file'])
-
 class Phase2Scene(Entity):
     def __init__(self, player_data, **kwargs):
         super().__init__(**kwargs)
@@ -249,36 +248,58 @@ class Phase2Scene(Entity):
         self.capture = cv2.VideoCapture(0)
         self.fishes = []
         self.color_detector = ColorDetector()
-        
-        # Add example hooks
-        self.color_detector.add_red_hook(lambda: print("Red detected!"))
-        self.color_detector.add_blue_hook(lambda: print("Blue detected!"))
+        self.red_cooldown = 0
+        self.blue_cooldown = 0
         
         # Create aquarium background
         self.background = Entity(model='quad', texture='assets/water', scale=(16, 9))
         
         # Spawn fish
         for data in self.player_data:
-            texture = load_texture(data['temp_file'])
-            if texture:  # Only create fish if texture exists
-                fish = Fish(player_num=data['player_num'], texture=texture)
+            if data['texture']:  # Only create fish if texture exists
+                fish = Fish(player_num=data['player_num'], generation=0)
                 self.fishes.append(fish)
 
     def update(self):
         # Color detection loop
         ret, frame = self.capture.read()
         if ret:
+            frame = cv2.flip(frame, 1)  # Flip horizontally
             for data in self.player_data:
-                x, y, w, h = data['x'], data['y'], data['width'], data['height']
-                if x >= 0 and y >= 0 and w > 0 and h > 0:  # Ensure valid coordinates
+                bbox = data['bbox']
+                h, w = frame.shape[:2]
+                x = int(bbox.xmin * w)
+                y = int(bbox.ymin * h)
+                width = int(bbox.width * w)
+                height = int(bbox.height * h)
+                
+                if x >= 0 and y >= 0 and width > 0 and height > 0:
                     try:
-                        face_roi = frame[y:y+h, x:x+w]
-                        if face_roi.size != 0:
-                            detected_color = self.color_detector.detect_color(face_roi)
-                            if detected_color:
-                                print(f'Player {data["player_num"]} activated {detected_color}!')
+                        face_roi = frame[y:y+height, x:x+width]
+                        if face_roi.size > 0:
+                            detected_color = self.color_detector.detect_color(face_roi, data['player_num'])
+                            if detected_color == 'red':
+                                self.handle_red_action(data['player_num'])
+                            elif detected_color == 'blue':
+                                self.handle_blue_action(data['player_num'])
                     except:
-                        pass  # Handle any array access errors
+                        pass
+
+    def handle_red_action(self, player_num):
+        print(f"Player {player_num} triggered red action")
+        for fish in self.fishes:
+            if fish.player_num == player_num:
+                fish.dash()
+                
+    def handle_blue_action(self, player_num):
+        print(f"Player {player_num} triggered blue action")
+        for fish in self.fishes:
+            if fish.player_num == player_num:
+                fish.rotate(time.dt * 360)
+
+    def on_destroy(self):
+        if self.capture.isOpened():
+            self.capture.release()
 
 class ColorDetector:
     def __init__(self):
@@ -286,64 +307,64 @@ class ColorDetector:
         self.target_red = [50, 70, 140]  # RGB -> BGR
         self.target_blue = [150, 50, 100]  # RGB -> BGR
         self.color_threshold = 20  # Allowed color difference
-        self.red_hooks = []
-        self.blue_hooks = []
         
-    def add_red_hook(self, callback):
-        self.red_hooks.append(callback)
-        
-    def add_blue_hook(self, callback):
-        self.blue_hooks.append(callback)
-        
-    def detect_color(self, roi):
+    def detect_color(self, roi, player_num):
         # Calculate percentage of pixels that are red/blue
         pixels = roi.reshape(-1, 3)  # Reshape to list of pixels
         total_pixels = len(pixels)
         
         # Count pixels where red channel > 110
-        red_pixels = np.sum(pixels[:, 2] > 110)  # Red is channel 2 in BGR
+        red_pixels = np.sum(pixels[:, 2] > 150)  # Red is channel 2 in BGR
         red_percentage = red_pixels / total_pixels
         
         # Count pixels where blue channel > 110 
-        blue_pixels = np.sum(pixels[:, 0] > 110)  # Blue is channel 0 in BGR
+        blue_pixels = np.sum(pixels[:, 0] > 150)  # Blue is channel 0 in BGR
         blue_percentage = blue_pixels / total_pixels
 
+        print(f"Red percentage: {red_percentage}, Blue percentage: {blue_percentage}")
         # If more than 50% of pixels are red/blue
-        if red_percentage > 0.5:
-            for hook in self.red_hooks:
-                hook()
-            print("Red detected!")
+        if red_percentage > 0.85:
             return 'red'
-        elif blue_percentage > 0.5:
-            for hook in self.blue_hooks:
-                hook()
-            print("Blue detected!")
+        elif blue_percentage > 0.85:
             return 'blue'
         return None
 
-    def on_destroy(self):
-        if self.capture.isOpened():
-            self.capture.release()
-
 class Fish(Entity):
-    def __init__(self, player_num, texture, **kwargs):
-        super().__init__(model='quad', texture='assets/fish_body', scale=(0.5, 0.3))
-        self.player_num = player_num
-        self.speed = Vec2(random.uniform(-1, 1), random.uniform(-1, 1)).normalized() * 0.02
+    def __init__(self, player_num, generation=0, **kwargs):
+        # Map generation to model file
+        # model_files = {
+        #     0: 'assets/red_fish.glb',
+        #     1: 'assets/orange_fish.glb', 
+        #     2: 'assets/yellow_fish.glb',
+        #     3: 'assets/green_fish.glb'
+        # }
+        # model_file = model_files.get(min(generation, 3))  # Default to green for generation > 3
         
-        # Replace head with player face
-        self.head = Entity(
-            parent=self,
-            texture=texture,
-            scale=(0.3, 0.3),
-            position=(0.15, 0)
-        )
+        super().__init__(model='assets/red_fish.glb', scale=0.75)
+
+        self.player_num = player_num
+        self.generation = generation
+        self.speed = Vec3(random.uniform(-1, 1), random.uniform(-1, 1), 0).normalized() * 0.02
 
     def update(self):
+        # Handle movement
         self.position += self.speed
-        # Simple boundary check
+        
+        # Boundary check
         if abs(self.x) > 7 or abs(self.y) > 4:
             self.speed *= -1
+            # Rotate fish model to face movement direction
+            self.look_at(self.position + self.speed)
+            
+    def dash(self):
+        self.speed *= 3
+        invoke(self.reset_speed, delay=0.5)
+        
+    def reset_speed(self):
+        self.speed = self.speed.normalized() * 0.02
+        
+    def rotate(self, direction):
+        self.rotation_y += 180 * direction * time.dt
 
 if __name__ == '__main__':
     app = Ursina()
