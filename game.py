@@ -17,6 +17,7 @@ class Phase1Scene(Entity):
         self.capture = cv2.VideoCapture(0)
         self.player_data = []
         self.debug_entities = []
+        self.face_detection_active = True
         
         # Set camera resolution higher to better detect faces
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 10000)  # Will set to max supported width
@@ -32,61 +33,81 @@ class Phase1Scene(Entity):
             self.show_debug_screen()
 
     def process_frame(self):
-        # Clear previous player data
-        self.player_data = []
         # Clear previous debug entities
         for entity in self.debug_entities:
             destroy(entity)
         self.debug_entities = []
 
-        with mp_face_detection.FaceDetection(
-            min_detection_confidence=0.5,
-            model_selection=1  # Use full-range model instead of short-range
-        ) as face_detection:
-            # Flip the frame horizontally first
-            self.frame = cv2.flip(self.frame, 1)
-            rgb_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
-            results = face_detection.process(rgb_frame)
+        if self.face_detection_active:
+            # Clear previous player data only during face detection
+            self.player_data = []
+            
+            with mp_face_detection.FaceDetection(
+                min_detection_confidence=0.5,
+                model_selection=1  # Use full-range model instead of short-range
+            ) as face_detection:
+                # Flip the frame horizontally first
+                self.frame = cv2.flip(self.frame, 1)
+                rgb_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
+                results = face_detection.process(rgb_frame)
 
-            if results.detections:
-                for i, detection in enumerate(results.detections):
-                    h, w = self.frame.shape[:2]
-                    bbox = detection.location_data.relative_bounding_box
-                    
-                    # Add padding around face detection
-                    padding = 0.1  # 10% padding
-                    x = int((bbox.xmin - padding) * w)
-                    y = int((bbox.ymin - padding) * h)
-                    width = int((bbox.width + 2*padding) * w)
-                    height = int((bbox.height + 2*padding) * h)
-                    
-                    # Ensure coordinates are within frame bounds
-                    x = max(0, min(x, w-1))
-                    y = max(0, min(y, h-1))
-                    width = min(width, w-x)
-                    height = min(height, h-y)
-                    
-                    # Store player data
-                    data = {
-                        'player_num': i+1,
-                        'x': x,
-                        'y': y,
-                        'width': width,
-                        'height': height,
-                        'bbox': bbox,
-                        'texture': None,
-                        'temp_file': f'temp_face_{i}.png'
-                    }
-                    self.player_data.append(data)
-                    
-                    # Save face image to temp file
-                    if width > 0 and height > 0:  # Ensure valid dimensions
-                        face_img = self.frame[y:y+height, x:x+width]
-                        # Save to random file name
-                        temp_file = f'temp_face_{i}_{random.randint(1, 1000000)}.png'
-                        cv2.imwrite(temp_file, face_img)
-                        self.player_data[-1]['texture'] = load_texture(temp_file)
-                        os.remove(temp_file)
+                if results.detections:
+                    for i, detection in enumerate(results.detections):
+                        h, w = self.frame.shape[:2]
+                        bbox = detection.location_data.relative_bounding_box
+                        
+                        # Add padding around face detection
+                        padding = 0.1  # 10% padding
+                        x = int((bbox.xmin - padding) * w)
+                        y = int((bbox.ymin - padding) * h)
+                        width = int((bbox.width + 2*padding) * w)
+                        height = int((bbox.height + 2*padding) * h)
+                        
+                        # Ensure coordinates are within frame bounds
+                        x = max(0, min(x, w-1))
+                        y = max(0, min(y, h-1))
+                        width = min(width, w-x)
+                        height = min(height, h-y)
+                        
+                        # Get dominant color from face region
+                        face_roi = self.frame[y:y+height, x:x+width]
+                        avg_color = cv2.mean(face_roi)[:3]
+                        
+                        # Store player data
+                        data = {
+                            'player_num': i+1,
+                            'x': x,
+                            'y': y,
+                            'width': width,
+                            'height': height,
+                            'bbox': bbox,
+                            'key_points': detection.location_data.relative_keypoints,
+                            'texture': None,
+                            'dominant_color': avg_color,
+                            'temp_file': f'temp_face_{i}.png'
+                        }
+                        self.player_data.append(data)
+                        
+                        # Save face image to temp file
+                        if width > 0 and height > 0:  # Ensure valid dimensions
+                            face_img = self.frame[y:y+height, x:x+width]
+                            # Save to random file name
+                            temp_file = f'temp_face_{i}_{random.randint(1, 1000000)}.png'
+                            cv2.imwrite(temp_file, face_img)
+                            self.player_data[-1]['texture'] = load_texture(temp_file)
+                            os.remove(temp_file)
+        else:
+            # Just track colors in existing bounding boxes
+            self.frame = cv2.flip(self.frame, 1)
+            for data in self.player_data:
+                x, y = data['x'], data['y']
+                w, h = data['width'], data['height']
+                if x >= 0 and y >= 0 and w > 0 and h > 0:
+                    roi = self.frame[y:y+h, x:x+w]
+                    if roi.size > 0:
+                        # Calculate dominant color
+                        avg_color = cv2.mean(roi)[:3]
+                        data['dominant_color'] = avg_color
                         
         # Update debug screen with new data
         self.show_debug_screen()
@@ -129,10 +150,15 @@ class Phase1Scene(Entity):
                 )
                 self.debug_entities.append(face_entity)
                 
-                # Display player number with larger text
+                # Display player number and color info with larger text
+                color_info = ""
+                if data['dominant_color'] is not None:
+                    r, g, b = data['dominant_color']
+                    color_info = f"\nColor: R:{int(r)} G:{int(g)} B:{int(b)}"
+                    
                 text_entity = Text(
                     parent=self,
-                    text=f'Player {data["player_num"]}',
+                    text=f'Player {data["player_num"]}{color_info}',
                     position=face_entity.position + Vec2(0, -0.6),
                     origin=(0, 0),
                     color=color.white,
@@ -141,6 +167,19 @@ class Phase1Scene(Entity):
                     z=0
                 )
                 self.debug_entities.append(text_entity)
+                
+                # Add color swatch
+                if data['dominant_color'] is not None:
+                    r, g, b = data['dominant_color']
+                    color_swatch = Entity(
+                        parent=self,
+                        model='quad',
+                        color=color.rgb(r/255, g/255, b/255),
+                        position=face_entity.position + Vec2(0.6, 0),
+                        scale=(0.2, 0.2),
+                        z=0
+                    )
+                    self.debug_entities.append(color_swatch)
 
         # Add debug instruction with larger text
         instruction = Text(
@@ -160,6 +199,16 @@ class Phase1Scene(Entity):
         ret, self.frame = self.capture.read()
         if ret:
             self.process_frame()
+
+        # Check for spacebar input here instead of global input handler
+        if held_keys['space']:
+            if self.face_detection_active:
+                print("Stopping face detection")
+                self.face_detection_active = False
+            # else:
+            #     phase2 = Phase2Scene(player_data=self.player_data)
+            #     destroy(self)
+            #     scene.entities.append(phase2)
 
     def on_destroy(self):
         if self.capture.isOpened():
@@ -229,13 +278,6 @@ class Fish(Entity):
         # Simple boundary check
         if abs(self.x) > 7 or abs(self.y) > 4:
             self.speed *= -1
-
-def input(key):
-    global phase1
-    if key == 'space' and isinstance(scene.entities[0], Phase1Scene):
-        phase2 = Phase2Scene(player_data=phase1.player_data)
-        destroy(phase1)
-        scene.add(phase2)
 
 if __name__ == '__main__':
     app = Ursina()
