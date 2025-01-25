@@ -1,0 +1,184 @@
+from ursina import *
+import cv2
+import mediapipe as mp
+import numpy as np
+import random
+import time
+
+mp_face_detection = mp.solutions.face_detection
+mp_drawing = mp.solutions.drawing_utils
+
+class Phase1Scene(Entity):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.capture = cv2.VideoCapture(0)
+        self.player_data = []
+        self.debug_textures = []
+        
+        # Capture initial frame
+        # Take a throwaway frame to let camera adjust exposure
+        ret, _ = self.capture.read()
+        time.sleep(0.2)  # Wait 200ms
+        ret, self.frame = self.capture.read()  # Take the real frame
+        if ret:
+            self.process_frame()
+            self.show_debug_screen()
+
+    def process_frame(self):
+        with mp_face_detection.FaceDetection(min_detection_confidence=0.5) as face_detection:
+            rgb_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
+            results = face_detection.process(rgb_frame)
+
+            print(results.detections)
+            if results.detections:
+                for i, detection in enumerate(results.detections):
+                    h, w = self.frame.shape[:2]
+                    bbox = detection.location_data.relative_bounding_box
+                    x = int(bbox.xmin * w)
+                    y = int(bbox.ymin * h)
+                    width = int(bbox.width * w)
+                    height = int(bbox.height * h)
+                    
+                    # Ensure coordinates are within frame bounds
+                    x = max(0, min(x, w-1))
+                    y = max(0, min(y, h-1))
+                    width = min(width, w-x)
+                    height = min(height, h-y)
+                    
+                    # Store player data
+                    self.player_data.append({
+                        'player_num': i+1,
+                        'x': x,
+                        'y': y,
+                        'width': width,
+                        'height': height,
+                        'texture': None
+                    })
+                    
+                    # Crop and store face texture
+                    if width > 0 and height > 0:  # Ensure valid dimensions
+                        face_img = self.frame[y:y+height, x:x+width]
+                        # Ensure face_img is not empty
+                        if face_img.size > 0:
+                            rgb_face = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                            temp_file = 'temp_face.png'
+                            cv2.imwrite(temp_file, rgb_face)
+                            self.player_data[-1]['texture'] = Texture(temp_file)
+                            # import os
+                            # os.remove(temp_file)
+
+    def show_debug_screen(self):
+        # Debug display setup
+        grid_size = max(1, int(len(self.player_data) ** 0.5))
+        for i, data in enumerate(self.player_data):
+            if data['texture']:  # Only create entity if texture exists
+                col = i % grid_size
+                row = i // grid_size
+                
+                # Display face crop
+                face_entity = Entity(
+                    parent=self,
+                    texture=data['texture'],
+                    position=Vec2(window.left.x + 0.2 + col*0.3, window.top.y - 0.2 - row*0.4),
+                    scale=(0.25, 0.25)
+                )
+                
+                # Display player number
+                Text(
+                    parent=self,
+                    text=f'Player {data["player_num"]}',
+                    position=face_entity.position + Vec2(0, -0.15),
+                    origin=(0, 0),
+                    color=color.white,
+                    scale=2,
+                    font='VeraMono.ttf'
+                )
+
+        # Add debug instruction
+        Text(
+            parent=self,
+            text="DEBUG SCREEN - Press 'space' to continue",
+            position=(0, -0.4),
+            origin=(0, 0),
+            color=color.yellow,
+            scale=2,
+            font='VeraMono.ttf'
+        )
+
+    def on_destroy(self):
+        if self.capture.isOpened():
+            self.capture.release()
+
+class Phase2Scene(Entity):
+    def __init__(self, player_data, **kwargs):
+        super().__init__(**kwargs)
+        self.player_data = player_data
+        self.capture = cv2.VideoCapture(0)
+        self.fishes = []
+        
+        # Create aquarium background
+        self.background = Entity(model='quad', texture='assets/water', scale=(16, 9))
+        
+        # Spawn fish
+        for data in self.player_data:
+            if data['texture']:  # Only create fish if texture exists
+                fish = Fish(player_num=data['player_num'], texture=data['texture'])
+                self.fishes.append(fish)
+
+    def update(self):
+        # Color detection loop
+        ret, frame = self.capture.read()
+        if ret:
+            for data in self.player_data:
+                x, y, w, h = data['x'], data['y'], data['width'], data['height']
+                if x >= 0 and y >= 0 and w > 0 and h > 0:  # Ensure valid coordinates
+                    try:
+                        face_roi = frame[y:y+h, x:x+w]
+                        if face_roi.size != 0:
+                            avg_color = cv2.mean(face_roi)[:3]
+                            if self.is_blue(avg_color):
+                                print(f'Player {data["player_num"]} activated blue!')
+                    except:
+                        pass  # Handle any array access errors
+
+    def is_blue(self, color):
+        # Simple blue detection (BGR format)
+        return color[0] > 100 and color[1] < 50 and color[2] < 50
+
+    def on_destroy(self):
+        if self.capture.isOpened():
+            self.capture.release()
+
+class Fish(Entity):
+    def __init__(self, player_num, texture, **kwargs):
+        super().__init__(model='quad', texture='assets/fish_body', scale=(0.5, 0.3))
+        self.player_num = player_num
+        self.speed = Vec2(random.uniform(-1, 1), random.uniform(-1, 1)).normalized() * 0.02
+        
+        # Replace head with player face
+        self.head = Entity(
+            parent=self,
+            texture=texture,
+            scale=(0.3, 0.3),
+            position=(0.15, 0)
+        )
+
+    def update(self):
+        self.position += self.speed
+        # Simple boundary check
+        if abs(self.x) > 7 or abs(self.y) > 4:
+            self.speed *= -1
+
+def input(key):
+    global phase1
+    if key == 'space' and isinstance(scene.entities[0], Phase1Scene):
+        phase2 = Phase2Scene(player_data=phase1.player_data)
+        destroy(phase1)
+        scene.add(phase2)
+
+if __name__ == '__main__':
+    app = Ursina()
+    window.fullscreen = True
+    phase1 = Phase1Scene()
+    scene.entities.append(phase1)
+    app.run()
