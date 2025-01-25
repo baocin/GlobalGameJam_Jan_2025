@@ -229,10 +229,10 @@ class Phase1Scene(Entity):
             if self.face_detection_active:
                 print("Stopping face detection")
                 self.face_detection_active = False
-            # else:
-            #     phase2 = Phase2Scene(player_data=self.player_data)
-            #     destroy(self)
-            #     scene.entities.append(phase2)
+            else:
+                phase2 = Phase2Scene(player_data=self.player_data)
+                destroy(self)
+                scene.entities.append(phase2)
 
     def on_destroy(self):
         if self.capture.isOpened():
@@ -248,6 +248,11 @@ class Phase2Scene(Entity):
         self.player_data = player_data
         self.capture = cv2.VideoCapture(0)
         self.fishes = []
+        self.color_detector = ColorDetector()
+        
+        # Add example hooks
+        self.color_detector.add_red_hook(lambda: print("Red detected!"))
+        self.color_detector.add_blue_hook(lambda: print("Blue detected!"))
         
         # Create aquarium background
         self.background = Entity(model='quad', texture='assets/water', scale=(16, 9))
@@ -269,15 +274,52 @@ class Phase2Scene(Entity):
                     try:
                         face_roi = frame[y:y+h, x:x+w]
                         if face_roi.size != 0:
-                            avg_color = cv2.mean(face_roi)[:3]
-                            if self.is_blue(avg_color):
-                                print(f'Player {data["player_num"]} activated blue!')
+                            detected_color = self.color_detector.detect_color(face_roi)
+                            if detected_color:
+                                print(f'Player {data["player_num"]} activated {detected_color}!')
                     except:
                         pass  # Handle any array access errors
 
-    def is_blue(self, color):
-        # Simple blue detection (BGR format)
-        return color[0] > 100 and color[1] < 50 and color[2] < 50
+class ColorDetector:
+    def __init__(self):
+        # Convert RGB targets to BGR for OpenCV
+        self.target_red = [50, 70, 140]  # RGB -> BGR
+        self.target_blue = [150, 50, 100]  # RGB -> BGR
+        self.color_threshold = 20  # Allowed color difference
+        self.red_hooks = []
+        self.blue_hooks = []
+        
+    def add_red_hook(self, callback):
+        self.red_hooks.append(callback)
+        
+    def add_blue_hook(self, callback):
+        self.blue_hooks.append(callback)
+        
+    def detect_color(self, roi):
+        # Calculate percentage of pixels that are red/blue
+        pixels = roi.reshape(-1, 3)  # Reshape to list of pixels
+        total_pixels = len(pixels)
+        
+        # Count pixels where red channel > 110
+        red_pixels = np.sum(pixels[:, 2] > 110)  # Red is channel 2 in BGR
+        red_percentage = red_pixels / total_pixels
+        
+        # Count pixels where blue channel > 110 
+        blue_pixels = np.sum(pixels[:, 0] > 110)  # Blue is channel 0 in BGR
+        blue_percentage = blue_pixels / total_pixels
+
+        # If more than 50% of pixels are red/blue
+        if red_percentage > 0.5:
+            for hook in self.red_hooks:
+                hook()
+            print("Red detected!")
+            return 'red'
+        elif blue_percentage > 0.5:
+            for hook in self.blue_hooks:
+                hook()
+            print("Blue detected!")
+            return 'blue'
+        return None
 
     def on_destroy(self):
         if self.capture.isOpened():
@@ -305,7 +347,7 @@ class Fish(Entity):
 
 if __name__ == '__main__':
     app = Ursina()
-    window.fullscreen = True
+    window.fullscreen = False
     phase1 = Phase1Scene()
     scene.entities.append(phase1)
     app.run()
