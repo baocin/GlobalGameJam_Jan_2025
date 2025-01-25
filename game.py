@@ -36,7 +36,7 @@ class Phase1Scene(Entity):
         # Clear previous debug entities
         for entity in self.debug_entities:
             destroy(entity)
-        self.debug_entities = []
+        self.debug_entities.clear()  # Properly clear the list
 
         if self.face_detection_active:
             # Clear previous player data only during face detection
@@ -99,15 +99,26 @@ class Phase1Scene(Entity):
         else:
             # Just track colors in existing bounding boxes
             self.frame = cv2.flip(self.frame, 1)
+            rgb_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
             for data in self.player_data:
-                x, y = data['x'], data['y']
-                w, h = data['width'], data['height']
-                if x >= 0 and y >= 0 and w > 0 and h > 0:
-                    roi = self.frame[y:y+h, x:x+w]
+                bbox = data['bbox']
+                h, w = self.frame.shape[:2]
+                x = int(bbox.xmin * w)
+                y = int(bbox.ymin * h)
+                width = int(bbox.width * w)
+                height = int(bbox.height * h)
+                
+                if x >= 0 and y >= 0 and width > 0 and height > 0:
+                    roi = rgb_frame[y:y+height, x:x+width]
                     if roi.size > 0:
                         # Calculate dominant color
-                        avg_color = cv2.mean(roi)[:3]
-                        data['dominant_color'] = avg_color
+                        # Use k-means clustering to find dominant color
+                        pixels = roi.reshape(-1, 3)
+                        pixels = np.float32(pixels)
+                        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+                        _, labels, centers = cv2.kmeans(pixels, 1, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+                        avg_color = centers[0]
+                        self.player_data[self.player_data.index(data)]['dominant_color'] = avg_color
                         
         # Update debug screen with new data
         self.show_debug_screen()
@@ -139,6 +150,19 @@ class Phase1Scene(Entity):
                 x = (col - (grid_size-1)/2) * spacing
                 y = ((grid_size-1)/2 - row) * spacing
                 
+                # Create colored border first
+                if data['dominant_color'] is not None:
+                    r, g, b = data['dominant_color']
+                    border = Entity(
+                        parent=self,
+                        model='quad',
+                        color=color.rgb(r/255, g/255, b/255),
+                        position=Vec2(x, y),
+                        scale=(1.1, 1.1),  # Slightly larger than face
+                        z=0.1
+                    )
+                    self.debug_entities.append(border)
+                
                 # Display face crop with larger scale
                 face_entity = Entity(
                     parent=self,
@@ -161,7 +185,7 @@ class Phase1Scene(Entity):
                     text=f'Player {data["player_num"]}{color_info}',
                     position=face_entity.position + Vec2(0, -0.6),
                     origin=(0, 0),
-                    color=color.white,
+                    color=color.rgb(r, g, b),
                     scale=4,  # Increased scale
                     font='VeraMono.ttf',
                     z=0
@@ -174,7 +198,7 @@ class Phase1Scene(Entity):
                     color_swatch = Entity(
                         parent=self,
                         model='quad',
-                        color=color.rgb(r/255, g/255, b/255),
+                        color=color.rgb(r, g, b),
                         position=face_entity.position + Vec2(0.6, 0),
                         scale=(0.2, 0.2),
                         z=0
