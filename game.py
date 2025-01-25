@@ -318,7 +318,7 @@ class ColorDetector:
         red_percentage = red_pixels / total_pixels
         
         # Count pixels where blue channel > 110 
-        blue_pixels = np.sum(pixels[:, 0] > 150)  # Blue is channel 0 in BGR
+        blue_pixels = np.sum(pixels[:, 0] > 120)  # Blue is channel 0 in BGR
         blue_percentage = blue_pixels / total_pixels
 
         print(f"Red percentage: {red_percentage}, Blue percentage: {blue_percentage}")
@@ -328,43 +328,61 @@ class ColorDetector:
         elif blue_percentage > 0.85:
             return 'blue'
         return None
-
+    
 class Fish(Entity):
     def __init__(self, player_num, generation=0, **kwargs):
         # Map generation to model file
-        # model_files = {
-        #     0: 'assets/red_fish.glb',
-        #     1: 'assets/orange_fish.glb', 
-        #     2: 'assets/yellow_fish.glb',
-        #     3: 'assets/green_fish.glb'
-        # }
-        # model_file = model_files.get(min(generation, 3))  # Default to green for generation > 3
+        model_files = {
+            0: 'assets/red_fish.glb',
+            1: 'assets/orange_fish.glb', 
+            2: 'assets/yellow_fish.glb',
+            3: 'assets/green_fish.glb'
+        }
+        model_file = model_files.get(min(generation, 3))  # Default to green for generation > 3
         
-        super().__init__(model='assets/red_fish.glb', scale=0.75)
+        super().__init__(model=model_file, scale=1)
 
         self.player_num = player_num
         self.generation = generation
+        # Calculate initial direction vector based on model's left side
         self.speed = Vec3(random.uniform(-1, 1), random.uniform(-1, 1), 0).normalized() * 0.02
+        # self.forward = Vec3(0, 0, -1)  # Left side of model in local space
+        self.acceleration = 1.0
+        self.dash_duration = 0
 
     def update(self):
-        # Handle movement
-        self.position += self.speed
+        # Handle movement with acceleration
+        if self.dash_duration > 0:
+            self.acceleration = min(self.acceleration + 0.1, 3.0)
+            self.dash_duration -= time.dt
+            if self.dash_duration <= 0:
+                self.reset_speed()
+                
+        self.position += self.speed * self.acceleration
         
-        # Boundary check
-        if abs(self.x) > 7 or abs(self.y) > 4:
-            self.speed *= -1
-            # Rotate fish model to face movement direction
-            self.look_at(self.position + self.speed)
+        # Wrap around screen edges
+        if self.x > 7:
+            self.x = -7
+        elif self.x < -7:
+            self.x = 7
+        if self.y > 4:
+            self.y = -4
+        elif self.y < -4:
+            self.y = 4
             
     def dash(self):
-        self.speed *= 3
-        invoke(self.reset_speed, delay=0.5)
+        # Convert local forward vector to world space based on current rotation
+        # world_forward = self.forward.rotate(self.rotation_z)
+        # self.speed = world_forward.normalized() * 0.02
+        
+        self.dash_duration = 0.5
         
     def reset_speed(self):
         self.speed = self.speed.normalized() * 0.02
+        self.acceleration = 1.0
         
     def rotate(self, direction):
-        self.rotation_y += 180 * direction * time.dt
+        self.rotation_z += 15 * direction * time.dt
 
 if __name__ == '__main__':
     app = Ursina()
