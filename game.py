@@ -1,9 +1,12 @@
 from ursina import *
+from ursina.texture_importer import load_texture
 import cv2
+import PIL
 import mediapipe as mp
 import numpy as np
 import random
 import time
+import os
 
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
@@ -13,7 +16,6 @@ class Phase1Scene(Entity):
         super().__init__(**kwargs)
         self.capture = cv2.VideoCapture(0)
         self.player_data = []
-        self.debug_textures = []
         self.debug_entities = []
         
         # Set camera resolution higher to better detect faces
@@ -30,13 +32,8 @@ class Phase1Scene(Entity):
             self.show_debug_screen()
 
     def process_frame(self):
-        # Clear previous player data and textures
+        # Clear previous player data
         self.player_data = []
-        for temp_file in self.debug_textures:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-        self.debug_textures = []
-        
         # Clear previous debug entities
         for entity in self.debug_entities:
             destroy(entity)
@@ -46,10 +43,11 @@ class Phase1Scene(Entity):
             min_detection_confidence=0.5,
             model_selection=1  # Use full-range model instead of short-range
         ) as face_detection:
+            # Flip the frame horizontally first
+            self.frame = cv2.flip(self.frame, 1)
             rgb_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
             results = face_detection.process(rgb_frame)
 
-            print(results.detections)
             if results.detections:
                 for i, detection in enumerate(results.detections):
                     h, w = self.frame.shape[:2]
@@ -69,79 +67,89 @@ class Phase1Scene(Entity):
                     height = min(height, h-y)
                     
                     # Store player data
-                    self.player_data.append({
+                    data = {
                         'player_num': i+1,
                         'x': x,
                         'y': y,
                         'width': width,
                         'height': height,
-                        'texture': None
-                    })
+                        'bbox': bbox,
+                        'texture': None,
+                        'temp_file': f'temp_face_{i}.png'
+                    }
+                    self.player_data.append(data)
                     
-                    # Crop and store face texture
+                    # Save face image to temp file
                     if width > 0 and height > 0:  # Ensure valid dimensions
                         face_img = self.frame[y:y+height, x:x+width]
-                        # Ensure face_img is not empty
-                        if face_img.size > 0:
-                            rgb_face = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-                            temp_file = f'temp_face_{i}.png'
-                            cv2.imwrite(temp_file, rgb_face)
-                            self.player_data[-1]['texture'] = Texture(temp_file)
-                            self.debug_textures.append(temp_file)
-                            os.remove(temp_file)
-
+                        # Save to random file name
+                        temp_file = f'temp_face_{i}_{random.randint(1, 1000000)}.png'
+                        cv2.imwrite(temp_file, face_img)
+                        self.player_data[-1]['texture'] = load_texture(temp_file)
+                        os.remove(temp_file)
+                        
         # Update debug screen with new data
         self.show_debug_screen()
 
     def show_debug_screen(self):
-        # Create a background panel
+        # Create a background panel that fills the screen
         panel = Entity(
             parent=self,
             model='quad',
             color=color.black66,
-            scale=(window.aspect_ratio, 1),
+            scale=(window.aspect_ratio * 2, 2),  # Double the scale to fill screen
             z=1
         )
         self.debug_entities.append(panel)
 
         # Debug display setup
         grid_size = max(1, int(len(self.player_data) ** 0.5))
+        spacing = 1.2  # Increased spacing between faces
+        
         for i, data in enumerate(self.player_data):
-            if data['texture']:  # Only create entity if texture exists
+            # Load texture from temp file
+            texture = data['texture']
+            
+            if texture:  # Only create entity if texture exists
                 col = i % grid_size
                 row = i // grid_size
                 
-                # Display face crop
+                # Calculate centered position
+                x = (col - (grid_size-1)/2) * spacing
+                y = ((grid_size-1)/2 - row) * spacing
+                
+                # Display face crop with larger scale
                 face_entity = Entity(
                     parent=self,
-                    texture=data['texture'],
-                    position=Vec2(window.left.x + 0.2 + col*0.3, window.top.y - 0.2 - row*0.4),
-                    scale=(0.25, 0.25),
+                    model='quad',  # Explicitly set model
+                    texture=texture,
+                    position=Vec2(x, y),
+                    scale=(1.0, 1.0),  # Increased scale
                     z=0
                 )
                 self.debug_entities.append(face_entity)
                 
-                # Display player number
+                # Display player number with larger text
                 text_entity = Text(
                     parent=self,
                     text=f'Player {data["player_num"]}',
-                    position=face_entity.position + Vec2(0, -0.15),
+                    position=face_entity.position + Vec2(0, -0.6),
                     origin=(0, 0),
                     color=color.white,
-                    scale=2,
+                    scale=4,  # Increased scale
                     font='VeraMono.ttf',
                     z=0
                 )
                 self.debug_entities.append(text_entity)
 
-        # Add debug instruction
+        # Add debug instruction with larger text
         instruction = Text(
             parent=self,
             text="DEBUG SCREEN - Press 'space' to continue",
-            position=(0, -0.4),
+            position=(0, -0.8),
             origin=(0, 0),
             color=color.yellow,
-            scale=2,
+            scale=4,  # Increased scale
             font='VeraMono.ttf',
             z=0
         )
@@ -157,10 +165,9 @@ class Phase1Scene(Entity):
         if self.capture.isOpened():
             self.capture.release()
         # Clean up temporary files
-        import os
-        for temp_file in self.debug_textures:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        for data in self.player_data:
+            if os.path.exists(data['temp_file']):
+                os.remove(data['temp_file'])
 
 class Phase2Scene(Entity):
     def __init__(self, player_data, **kwargs):
@@ -174,8 +181,9 @@ class Phase2Scene(Entity):
         
         # Spawn fish
         for data in self.player_data:
-            if data['texture']:  # Only create fish if texture exists
-                fish = Fish(player_num=data['player_num'], texture=data['texture'])
+            texture = load_texture(data['temp_file'])
+            if texture:  # Only create fish if texture exists
+                fish = Fish(player_num=data['player_num'], texture=texture)
                 self.fishes.append(fish)
 
     def update(self):
