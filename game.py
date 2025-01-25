@@ -14,6 +14,11 @@ class Phase1Scene(Entity):
         self.capture = cv2.VideoCapture(0)
         self.player_data = []
         self.debug_textures = []
+        self.debug_entities = []
+        
+        # Set camera resolution higher to better detect faces
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 10000)  # Will set to max supported width
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 10000)  # Will set to max supported height
         
         # Capture initial frame
         # Take a throwaway frame to let camera adjust exposure
@@ -25,7 +30,22 @@ class Phase1Scene(Entity):
             self.show_debug_screen()
 
     def process_frame(self):
-        with mp_face_detection.FaceDetection(min_detection_confidence=0.5) as face_detection:
+        # Clear previous player data and textures
+        self.player_data = []
+        for temp_file in self.debug_textures:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        self.debug_textures = []
+        
+        # Clear previous debug entities
+        for entity in self.debug_entities:
+            destroy(entity)
+        self.debug_entities = []
+
+        with mp_face_detection.FaceDetection(
+            min_detection_confidence=0.5,
+            model_selection=1  # Use full-range model instead of short-range
+        ) as face_detection:
             rgb_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
             results = face_detection.process(rgb_frame)
 
@@ -34,10 +54,13 @@ class Phase1Scene(Entity):
                 for i, detection in enumerate(results.detections):
                     h, w = self.frame.shape[:2]
                     bbox = detection.location_data.relative_bounding_box
-                    x = int(bbox.xmin * w)
-                    y = int(bbox.ymin * h)
-                    width = int(bbox.width * w)
-                    height = int(bbox.height * h)
+                    
+                    # Add padding around face detection
+                    padding = 0.1  # 10% padding
+                    x = int((bbox.xmin - padding) * w)
+                    y = int((bbox.ymin - padding) * h)
+                    width = int((bbox.width + 2*padding) * w)
+                    height = int((bbox.height + 2*padding) * h)
                     
                     # Ensure coordinates are within frame bounds
                     x = max(0, min(x, w-1))
@@ -61,13 +84,26 @@ class Phase1Scene(Entity):
                         # Ensure face_img is not empty
                         if face_img.size > 0:
                             rgb_face = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-                            temp_file = 'temp_face.png'
+                            temp_file = f'temp_face_{i}.png'
                             cv2.imwrite(temp_file, rgb_face)
                             self.player_data[-1]['texture'] = Texture(temp_file)
-                            # import os
-                            # os.remove(temp_file)
+                            self.debug_textures.append(temp_file)
+                            os.remove(temp_file)
+
+        # Update debug screen with new data
+        self.show_debug_screen()
 
     def show_debug_screen(self):
+        # Create a background panel
+        panel = Entity(
+            parent=self,
+            model='quad',
+            color=color.black66,
+            scale=(window.aspect_ratio, 1),
+            z=1
+        )
+        self.debug_entities.append(panel)
+
         # Debug display setup
         grid_size = max(1, int(len(self.player_data) ** 0.5))
         for i, data in enumerate(self.player_data):
@@ -80,34 +116,51 @@ class Phase1Scene(Entity):
                     parent=self,
                     texture=data['texture'],
                     position=Vec2(window.left.x + 0.2 + col*0.3, window.top.y - 0.2 - row*0.4),
-                    scale=(0.25, 0.25)
+                    scale=(0.25, 0.25),
+                    z=0
                 )
+                self.debug_entities.append(face_entity)
                 
                 # Display player number
-                Text(
+                text_entity = Text(
                     parent=self,
                     text=f'Player {data["player_num"]}',
                     position=face_entity.position + Vec2(0, -0.15),
                     origin=(0, 0),
                     color=color.white,
                     scale=2,
-                    font='VeraMono.ttf'
+                    font='VeraMono.ttf',
+                    z=0
                 )
+                self.debug_entities.append(text_entity)
 
         # Add debug instruction
-        Text(
+        instruction = Text(
             parent=self,
             text="DEBUG SCREEN - Press 'space' to continue",
             position=(0, -0.4),
             origin=(0, 0),
             color=color.yellow,
             scale=2,
-            font='VeraMono.ttf'
+            font='VeraMono.ttf',
+            z=0
         )
+        self.debug_entities.append(instruction)
+
+    def update(self):
+        # Continuously capture and process frames
+        ret, self.frame = self.capture.read()
+        if ret:
+            self.process_frame()
 
     def on_destroy(self):
         if self.capture.isOpened():
             self.capture.release()
+        # Clean up temporary files
+        import os
+        for temp_file in self.debug_textures:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
 class Phase2Scene(Entity):
     def __init__(self, player_data, **kwargs):
