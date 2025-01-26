@@ -260,7 +260,7 @@ class Phase2Scene(Entity):
                 fish = Fish(player_num=data['player_num'], generation=0)
                 self.fishes.append(fish)
                 
-        EditorCamera()
+        # EditorCamera()
         self.color_display = Text(
             text="",
             position=(0, 0.45),
@@ -303,17 +303,18 @@ class Phase2Scene(Entity):
                     distance = (fish1.position - fish2.position).length()
                     if distance < 1:
                         new_gen = max(fish1.generation, fish2.generation) + 1
-                        new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
-                        new_fish.position = fish1.position
-                        self.fishes.append(new_fish)
-                        
-                        self.collision_cooldown[pair_key] = time.time()
-                        for fish in self.fishes:
-                            if fish != new_fish:
-                                pair_key = tuple(sorted([id(new_fish), id(fish)]))
-                                self.collision_cooldown[pair_key] = time.time()
-                        
-                        print(f"Collision! Spawned new fish with generation {new_gen}")
+                        if new_gen <= 5:  # Only spawn if generation would be 5 or less
+                            new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
+                            new_fish.position = fish1.position
+                            self.fishes.append(new_fish)
+                            
+                            self.collision_cooldown[pair_key] = time.time()
+                            for fish in self.fishes:
+                                if fish != new_fish:
+                                    pair_key = tuple(sorted([id(new_fish), id(fish)]))
+                                    self.collision_cooldown[pair_key] = time.time()
+                            
+                            print(f"Collision! Spawned new fish with generation {new_gen}")
         
         # Color detection with throttling
         if time.time() - self.last_process_time > self.process_interval:
@@ -351,18 +352,19 @@ class Phase2Scene(Entity):
                 self.color_display.text = color_text
                 
             self.last_process_time = time.time()
-
+    
     def handle_red_action(self, player_num):
         print(f"Player {player_num} triggered red action")
         for fish in self.fishes:
             if fish.player_num == player_num:
-                fish.dash()
+                fish.position += 0.05
                 
     def handle_green_action(self, player_num):
-        print(f"Player {player_num} triggered green action")
+        print(f"Player {player_num} triggered green action") 
         for fish in self.fishes:
             if fish.player_num == player_num:
-                fish.rotate(time.dt * 360)
+                # rotate in parallel with the screen
+                fish.rotation_y += 15
 
     def on_destroy(self):
         if self.capture.isOpened():
@@ -412,12 +414,19 @@ class Fish(Entity):
 
         self.player_num = player_num
         self.generation = generation
-        self.forward = Vec3(1, 0, 0)
-        self.speed = Vec3(random.uniform(-1, 1), random.uniform(-1, 1), 0).normalized() * 0.02
+        
+        # Initialize with random rotation around z axis
+        self.rotation_z = random.uniform(0, 360)
+        self.rotation_x = 90
+        
+        # Set forward direction based on rotation
+        angle_rad = math.radians(self.rotation_z)
+        self.forward = Vec3(math.cos(angle_rad), math.sin(angle_rad), 0)
+        
+        # Set initial speed in forward direction
+        self.speed = self.forward * 0.02
         self.acceleration = 1.0
         self.dash_duration = 0
-        self.rotation_x = 90
-        self.rotation_z = random.uniform(0, 360)
         
         self.player_text = Text(
             text=str(player_num),
@@ -481,7 +490,8 @@ if __name__ == '__main__':
     app = Ursina(
         title='Bang Bang Bubbles',
         development_mode=False,
-        editor_ui=False
+        editor_ui=False,
+        fullscreen=False
     )
     phase1 = Phase1Scene()
     scene.entities.append(phase1)
