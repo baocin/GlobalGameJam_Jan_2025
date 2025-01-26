@@ -23,6 +23,13 @@ class Phase1Scene(Entity):
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 10000)  # Will set to max supported width
         self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 10000)  # Will set to max supported height
         
+        # Disable auto color correction, white balance and flicker detection
+        self.capture.set(cv2.CAP_PROP_AUTO_WB, 0)  # Disable auto white balance
+        self.capture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Disable auto exposure
+        self.capture.set(cv2.CAP_PROP_MONOCHROME, 0)  # Disable monochrome mode
+        self.capture.set(cv2.CAP_PROP_CONVERT_RGB, 0)  # Disable color conversion
+        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize frame buffer
+        
         # Capture initial frame
         # Take a throwaway frame to let camera adjust exposure
         ret, _ = self.capture.read()
