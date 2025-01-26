@@ -2,7 +2,7 @@ from ursina import *
 from ursina.texture_importer import load_texture
 from ursina.prefabs.editor_camera import EditorCamera
 import cv2
-from PIL import Image
+from PIL import Image, ImageDraw
 import io
 import mediapipe as mp
 import numpy as np
@@ -14,6 +14,9 @@ from collections import defaultdict
 
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
+
+# Global player data
+player_data = []
 
 class Bubble(Entity):
     def __init__(self, position, direction, speed=1, texture=None, **kwargs):
@@ -80,7 +83,8 @@ class Phase1Scene(Entity):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.capture = cv2.VideoCapture(0)
-        self.player_data = []
+        global player_data
+        player_data = []
         self.debug_entities = []
         self.face_detection_active = True
         self.player_colors = {}
@@ -122,7 +126,8 @@ class Phase1Scene(Entity):
 
         if self.face_detection_active:
             # Clear previous player data only during face detection
-            self.player_data = []
+            global player_data
+            player_data = []
             
             rgb_frame = cv2.cvtColor(cv2.flip(self.frame, 1), cv2.COLOR_BGR2RGB)
             results = self.face_detection(rgb_frame)
@@ -161,23 +166,39 @@ class Phase1Scene(Entity):
                         'texture': None,
                         'dominant_color': avg_color
                     }
-                    self.player_data.append(data)
+                    player_data.append(data)
                     
                     # Process face texture in memory
                     if width > 0 and height > 0:
+                        # Convert face image to PIL format
                         face_img = self.frame[y:y+height, x:x+width]
                         pil_img = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
-                        with io.BytesIO() as output:
-                            pil_img.save(output, format="PNG")
-                            contents = output.getvalue()
-                            
-                        # Convert bytes to PIL Image before creating texture
-                        img = Image.open(io.BytesIO(contents))
-                        self.player_data[-1]['texture'] = Texture(img)
+                        
+                        # Create circular mask
+                        mask = Image.new('L', pil_img.size, 0)
+                        draw = ImageDraw.Draw(mask)
+                        draw.ellipse((0, 0, pil_img.size[0], pil_img.size[1]), fill=255)
+                        
+                        # Create output image with transparency
+                        output = Image.new('RGBA', pil_img.size, (0, 0, 0, 0))
+                        output.paste(pil_img, (0, 0))
+                        output.putalpha(mask)
+                        
+                        # Generate random filename
+                        temp_filename = f'temp_face_{random.randint(1000,9999)}.png'
+                        
+                        # Save to temp file with transparency
+                        output.save(temp_filename, 'PNG')
+                        
+                        # Load back from file and create texture
+                        player_data[-1]['texture'] = load_texture(temp_filename)
+                        
+                        # Clean up temp file
+                        os.remove(temp_filename)
         else:
             # Just track colors in existing bounding boxes
             rgb_frame = cv2.cvtColor(cv2.flip(self.frame, 1), cv2.COLOR_BGR2RGB)
-            for data in self.player_data:
+            for data in player_data:
                 bbox = data['bbox']
                 h, w = self.frame.shape[:2]
                 x = int(bbox.xmin * w)
@@ -190,7 +211,7 @@ class Phase1Scene(Entity):
                     if roi.size > 0:
                         # Calculate dominant color using mean
                         avg_color = np.mean(roi, axis=(0,1))
-                        self.player_data[self.player_data.index(data)]['dominant_color'] = avg_color
+                        player_data[player_data.index(data)]['dominant_color'] = avg_color
                         
         # Update debug screen with new data
         self.show_debug_screen()
@@ -235,10 +256,10 @@ class Phase1Scene(Entity):
             self.debug_texts[0].enabled = True
 
         # Update debug display
-        grid_size = max(1, int(len(self.player_data) ** 0.5))
+        grid_size = max(1, int(len(player_data) ** 0.5))
         spacing = 1.2
         
-        for i, data in enumerate(self.player_data):
+        for i, data in enumerate(player_data):
             if i < len(self.debug_texts)-1:  # Reserve first text for color display
                 texture = data['texture']
                 if texture:
@@ -264,7 +285,7 @@ class Phase1Scene(Entity):
                         swatch.enabled = True
                     
         # Hide unused entities
-        for j in range(len(self.player_data)+1, len(self.debug_texts)):
+        for j in range(len(player_data)+1, len(self.debug_texts)):
             self.debug_texts[j].enabled = False
             if j-1 < len(self.debug_swatches):
                 self.debug_swatches[j-1].enabled = False
@@ -288,7 +309,7 @@ class Phase1Scene(Entity):
                 print("Stopping face detection")
                 self.face_detection_active = False
             else:
-                phase2 = Phase2Scene(player_data=self.player_data)
+                phase2 = Phase2Scene(player_data=player_data)
                 destroy(self)
                 scene.entities.append(phase2)
 
@@ -297,8 +318,9 @@ class Phase1Scene(Entity):
             self.capture.release()
 
 class Phase2Scene(Entity):
-    def __init__(self, player_data, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        global player_data
         self.player_data = player_data
         self.capture = cv2.VideoCapture(0)
         
@@ -387,7 +409,8 @@ class Phase2Scene(Entity):
                         if distance * depth_factor < 1:
                             new_gen = max(fish1.generation, fish2.generation) + 1
                             if new_gen <= 5:  # Only spawn if generation would be 5 or less
-                                new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
+                                new_fish = Fish(player_num=fish1.player_num, generation=new_gen, 
+                                             parent1=fish1, parent2=fish2)
                                 new_fish.position = fish1.position
                                 self.fishes.append(new_fish)
                                 
@@ -398,6 +421,12 @@ class Phase2Scene(Entity):
                                         self.collision_cooldown[pair_key] = time.time()
                                 
                                 print(f"Collision! Spawned new fish with generation {new_gen}")
+        else:
+            # Transition to Phase3Scene when max population reached
+            phase3 = Phase3Scene(fishes=self.fishes)
+            destroy(self)
+            scene.entities.append(phase3)
+            return
         
         # Color detection with throttling
         if time.time() - self.last_process_time > self.process_interval:
@@ -454,10 +483,10 @@ class Phase2Scene(Entity):
         if self.capture.isOpened():
             self.capture.release()
         # Explicit texture cleanup
-        for data in self.player_data:
-            if data.get('texture'):
-                data['texture']._texture.release(data['texture']._texture)
-                data['texture'] = None
+        # for data in self.player_data:
+        #     if data.get('texture'):
+        #         data['texture']._texture.release(data['texture']._texture)
+        #         data['texture'] = None
 
 class ColorDetector:
     def __init__(self):
@@ -484,14 +513,23 @@ class ColorDetector:
         return None, int(red_pct), int(green_pct)
     
 class Fish(Entity):
-    def __init__(self, player_num, generation=0, bubble_texture=None, **kwargs):
+    def __init__(self, player_num, generation=0, parent1=None, parent2=None, bubble_texture=None, **kwargs):
         model_files = {0: 'assets/red_fish.glb', 1: 'assets/orange_fish.glb', 
                       2: 'assets/yellow_fish.glb', 3: 'assets/green_fish.glb'}
         super().__init__(model=model_files.get(min(generation, 3), 'assets/red_fish.glb'), scale=1)
         
         self.player_num = player_num
         self.generation = generation
+        self.parent1 = parent1
+        self.parent2 = parent2
+        self.children = []
         self.bubble_texture = bubble_texture
+        
+        # Add self to parents' children lists
+        if parent1:
+            parent1.children.append(self)
+        if parent2 and parent2 != parent1:
+            parent2.children.append(self)
         
         # Movement parameters
         self.base_speed = 0.1
@@ -612,7 +650,131 @@ class Fish(Entity):
                 parent=scene
             )
             bubble.z = self.z - random.uniform(0.1,0.3)
-
+class Phase3Scene(Entity):
+    def __init__(self, fishes, **kwargs):
+        super().__init__(**kwargs)
+        global player_data
+        self.fishes = fishes
+        
+        # Find fish with most descendants
+        self.winner = max(fishes, key=lambda f: len(f.children), default=None)
+        
+        if self.winner:
+            # Get winner's player data texture
+            winner_texture = None
+            for data in player_data:
+                if data['player_num'] == self.winner.player_num:
+                    winner_texture = data['texture']
+                    break
+                
+            # Display winner's face texture
+            if winner_texture:
+                # Create spiky glowing background
+                num_spikes = 12
+                vertices = []
+                uvs = []
+                triangles = []
+                
+                # Create star/spiky shape vertices
+                for i in range(num_spikes * 2):
+                    angle = math.pi * 2 * i / (num_spikes * 2)
+                    radius = 1.5 if i % 2 == 0 else 0.8  # Alternate between outer and inner points
+                    x = math.cos(angle) * radius
+                    y = math.sin(angle) * radius
+                    vertices.append((x, y, 0))
+                    uvs.append((x/2+0.5, y/2+0.5))
+                
+                # Create triangles connecting to center
+                center_idx = len(vertices)
+                vertices.append((0, 0, 0))
+                uvs.append((0.5, 0.5))
+                
+                for i in range(num_spikes * 2):
+                    triangles.append((i, (i+1) % (num_spikes*2), center_idx))
+                
+                # Create spiky glow mesh with collider
+                self.glow = Entity(
+                    parent=self,
+                    model=Mesh(vertices=vertices, triangles=triangles, uvs=uvs),
+                    color=color.yellow,
+                    scale=(2, 2),
+                    position=(0, 0, -0.5),
+                    collider='box'  # Add collider for physics
+                )
+                
+                # Create circular mask for winner photo with collider
+                self.winner_photo = Entity(
+                    parent=self,
+                    model='quad', 
+                    texture=winner_texture,
+                    scale=(2, 2),
+                    position=(0, 0, -1),
+                    collider='box'  # Add collider for physics
+                )
+                
+                # Add physics properties
+                self.spin_speed = 60  # Degrees per second
+                self.velocity = Vec3(random.uniform(-2,2), random.uniform(-2,2), 0)
+                
+                # Animate the spiky glow and handle physics
+                def update_glow():
+                    t = time.time()
+                    pulse = math.sin(t * 2) * 0.1 + 0.9  # Pulse between 0.8 and 1.0 scale
+                    
+                    # Update position based on velocity
+                    self.glow.position += self.velocity * time.dt
+                    self.winner_photo.position = self.glow.position + Vec3(0,0,-0.5)
+                    
+                    # Spin both entities
+                    self.glow.rotation_z += self.spin_speed * time.dt
+                    self.winner_photo.rotation_z = self.glow.rotation_z
+                    
+                    # Bounce off screen edges
+                    if abs(self.glow.x) > 5:
+                        self.velocity.x *= -1
+                    if abs(self.glow.y) > 3:
+                        self.velocity.y *= -1
+                        
+                    # Check collisions with fish
+                    for fish in self.fishes:
+                        if fish.enabled and self.glow.intersects(fish):
+                            # Bounce off fish
+                            self.velocity = (self.glow.position - fish.position).normalized() * 2
+                            fish.animate_scale(1.2, duration=0.1, curve=curve.out_elastic)
+                            fish.animate_scale(1, duration=0.1, delay=0.1)
+                    
+                    # Update visual effects
+                    self.glow.scale = (2.4 * pulse, 2.4 * pulse)
+                    self.glow.alpha = 0.3 + math.sin(t * 2) * 0.1
+                    self.winner_photo.scale = self.glow.scale
+                
+                self.glow.update = update_glow
+        # Add title and instructions
+        self.title = Text(
+            text="Winner!",
+            position=(0, 0.8),
+            origin=(0, 0),
+            color=color.yellow,
+            scale=4
+        )
+        
+        if self.winner:
+            self.winner_text = Text(
+                text=f"Player {self.winner.player_num} had the most offspring!",
+                position=(0, -0.8),
+                origin=(0, 0),
+                color=color.white,
+                scale=2
+            )
+        
+        self.instructions = Text(
+            text="Press 'space' to restart",
+            position=(0, -0.9),
+            origin=(0, 0),
+            color=color.white,
+            scale=2
+        )
+        
 if __name__ == '__main__':
     window.vsync = False
     app = Ursina(
