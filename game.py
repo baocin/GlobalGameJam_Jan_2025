@@ -1,6 +1,5 @@
 from ursina import *
 from ursina.texture_importer import load_texture
-from ursina.prefabs.trail_renderer import TrailRenderer
 from ursina.prefabs.editor_camera import EditorCamera
 import cv2
 from PIL import Image
@@ -491,25 +490,12 @@ class Fish(Entity):
         self.direction_arrow = Entity(
             parent=self,
             model='arrow',
-            color=color.red,
-            scale=(0.5, 0.5, 0.5),
+            color=color.rgba(1, 0, 0, 0.1),
+            scale=(0.1, 0.1, 0.1),
             rotation_x=-90,  # Changed from rotation_z to rotation_x
             position=(0.5, 0, 0),  # Position in front of the fish
             z=-0.1  # Ensure the arrow renders above the fish model
         )
-        
-        # Optimized trail renderer
-        self.trail = TrailRenderer(
-            parent=self,
-            color=color.red,
-            length=5,  # Reduced from 10
-            thickness=0.1,
-            min_spacing=0.2,  # Added minimum spacing between points
-            update_frequency=0.05,  # Only update every 0.05 seconds
-            max_points=15,  # Limit maximum number of trail points
-            texture='assets/bubble.glb'  # Ensure this texture is suitable for bubbles
-        )
-        self.trail.enabled = False
         
         # Random initial position and rotation
         self.position = (random.uniform(-7, 7), random.uniform(-4, 4), random.uniform(-1, 0))
@@ -542,13 +528,11 @@ class Fish(Entity):
             self.position += arrow_direction * self.current_speed * time.dt
             self.current_speed = lerp(self.current_speed, self.max_speed, time.dt * 15)
             self.scale = lerp(self.scale, self.dash_scale, time.dt * 10)
-            self.trail.enabled = True
         else:
             # Regular movement
             self.position += arrow_direction * self.current_speed * time.dt
             self.current_speed = lerp(self.current_speed, self.base_speed, time.dt * 5)
             self.scale = lerp(self.scale, self.normal_scale, time.dt * 10)
-            self.trail.enabled = False
         # Depth-based effects
         self.z += random.uniform(-0.01, 0.01)
         self.z = clamp(self.z, -1, 0)
