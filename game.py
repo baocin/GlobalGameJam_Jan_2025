@@ -250,6 +250,8 @@ class Phase2Scene(Entity):
         self.color_detector = ColorDetector()
         self.red_cooldown = 0
         self.blue_cooldown = 0
+        self.collision_cooldown = {}  # Track collision cooldowns per fish pair
+        self.start_time = time.time()  # Track when Phase2 starts
         
         # Create aquarium background
         self.background = Entity(model='quad', texture='assets/water', scale=(16, 9))
@@ -259,29 +261,84 @@ class Phase2Scene(Entity):
             if data['texture']:  # Only create fish if texture exists
                 fish = Fish(player_num=data['player_num'], generation=0)
                 self.fishes.append(fish)
+                
+        # Add editor camera
+        EditorCamera()
 
     def update(self):
+        # Check for 'r' key to spawn new fish for player 1
+        if held_keys['r']:
+            new_fish = Fish(player_num=1, generation=0)
+            self.fishes.append(new_fish)
+        
+        # Skip collision checks for first 3 seconds
+        if time.time() - self.start_time < 3:
+            return
+            
+        # Check for collisions between fish
+        for i, fish1 in enumerate(self.fishes):
+            for j, fish2 in enumerate(self.fishes[i+1:], i+1):
+                # Skip if same player's fish
+                if fish1.player_num == fish2.player_num:
+                    continue
+                    
+                # Create unique key for this fish pair
+                pair_key = tuple(sorted([id(fish1), id(fish2)]))
+                
+                # Check if cooldown has expired
+                if pair_key in self.collision_cooldown:
+                    if time.time() - self.collision_cooldown[pair_key] < 2:  # 2 second cooldown
+                        continue
+                        
+                # Check distance between fish
+                distance = (fish1.position - fish2.position).length()
+                if distance < 1:  # Collision threshold
+                    # Spawn new fish with higher generation
+                    new_gen = max(fish1.generation, fish2.generation) + 1
+                    new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
+                    new_fish.position = fish1.position
+                    self.fishes.append(new_fish)
+                    
+                    # Set cooldown for this pair
+                    self.collision_cooldown[pair_key] = time.time()
+                    # Also add created fish to collision cooldown
+                    # Add cooldown for new fish with each existing fish
+                    for fish in self.fishes:
+                        if fish != new_fish:
+                            pair_key = tuple(sorted([id(new_fish), id(fish)]))
+                            self.collision_cooldown[pair_key] = time.time()
+                    
+                    print(f"Collision! Spawned new fish with generation {new_gen}")
+                    
+        
         # Color detection loop
         ret, frame = self.capture.read()
         if ret:
             frame = cv2.flip(frame, 1)  # Flip horizontally
+            h, w = frame.shape[:2]
+            
+            # Process each player
             for data in self.player_data:
+                player_num = data['player_num']
                 bbox = data['bbox']
-                h, w = frame.shape[:2]
+                
+                # Calculate ROI coordinates
                 x = int(bbox.xmin * w)
-                y = int(bbox.ymin * h)
+                y = int(bbox.ymin * h) 
                 width = int(bbox.width * w)
                 height = int(bbox.height * h)
                 
+                # Check valid ROI dimensions
                 if x >= 0 and y >= 0 and width > 0 and height > 0:
                     try:
+                        # Extract and process face region
                         face_roi = frame[y:y+height, x:x+width]
                         if face_roi.size > 0:
-                            detected_color = self.color_detector.detect_color(face_roi, data['player_num'])
+                            detected_color = self.color_detector.detect_color(face_roi, player_num)
                             if detected_color == 'red':
-                                self.handle_red_action(data['player_num'])
+                                self.handle_red_action(player_num)
                             elif detected_color == 'blue':
-                                self.handle_blue_action(data['player_num'])
+                                self.handle_blue_action(player_num)
                     except:
                         pass
 
@@ -313,15 +370,17 @@ class ColorDetector:
         pixels = roi.reshape(-1, 3)  # Reshape to list of pixels
         total_pixels = len(pixels)
         
-        # Count pixels where red channel > 110
-        red_pixels = np.sum(pixels[:, 2] > 150)  # Red is channel 2 in BGR
+        # Count pixels where red channel > 150 and other channels < 100
+        red_mask = (pixels[:, 2] > 150) & (pixels[:, 1] < 100) & (pixels[:, 0] < 100)
+        red_pixels = np.sum(red_mask)
         red_percentage = red_pixels / total_pixels
         
-        # Count pixels where blue channel > 110 
-        blue_pixels = np.sum(pixels[:, 0] > 120)  # Blue is channel 0 in BGR
+        # Count pixels where blue channel > 120 and other channels < 100
+        blue_mask = (pixels[:, 0] > 120) & (pixels[:, 1] < 100) & (pixels[:, 2] < 100)
+        blue_pixels = np.sum(blue_mask)
         blue_percentage = blue_pixels / total_pixels
 
-        print(f"Red percentage: {red_percentage}, Blue percentage: {blue_percentage}")
+        print(f"Player {player_num} - Red percentage: {red_percentage}, Blue percentage: {blue_percentage}")
         # If more than 50% of pixels are red/blue
         if red_percentage > 0.85:
             return 'red'
@@ -340,7 +399,7 @@ class Fish(Entity):
         }
         model_file = model_files.get(min(generation, 3))  # Default to green for generation > 3
         
-        super().__init__(model=model_file, scale=1)
+        super().__init__(model=model_file, scale=1, collider='mesh')
 
         self.player_num = player_num
         self.generation = generation
@@ -349,6 +408,20 @@ class Fish(Entity):
         # self.forward = Vec3(0, 0, -1)  # Left side of model in local space
         self.acceleration = 1.0
         self.dash_duration = 0
+        self.position.z = 4
+        
+        # Add text entity to show player number
+        self.player_text = Text(
+            text=str(player_num),
+            parent=self,
+            y=-0.20,
+            color=color.white,
+            scale=6,
+            origin=(0,0),
+            background=False,
+            # background_color=color.black66
+        )
+        self.player_text.billboard = True  # Make text always face camera
 
     def update(self):
         # Handle movement with acceleration
@@ -375,7 +448,11 @@ class Fish(Entity):
         # world_forward = self.forward.rotate(self.rotation_z)
         # self.speed = world_forward.normalized() * 0.02
         
+        self.speed = self.speed.normalized() * 0.02
+        
         self.dash_duration = 0.5
+        # Animate rotation during dash
+        # self.animate('rotation_y', self.rotation_y + 360, duration=0.5, curve=curve.in_out_expo)
         
     def reset_speed(self):
         self.speed = self.speed.normalized() * 0.02
@@ -383,7 +460,28 @@ class Fish(Entity):
         
     def rotate(self, direction):
         self.rotation_z += 15 * direction * time.dt
+        # self.animate('rotation_y', self.rotation_y + 360, duration=0.5, curve=curve.in_out_expo)
+        # self.look_at_closest_fish(self.fishes)
 
+    def look_at_closest_fish(self, fish_list):
+        if not fish_list:
+            return
+            
+        # Find closest fish
+        closest_fish = None
+        min_distance = float('inf')
+        for fish in fish_list:
+            if fish == self:  # Skip self
+                continue
+            distance = (fish.position - self.position).length()
+            if distance < min_distance:
+                min_distance = distance
+                closest_fish = fish
+                
+        if closest_fish:
+            # Look at closest fish along z-axis
+            self.look_at(closest_fish.position, axis='z')
+            
 if __name__ == '__main__':
     app = Ursina()
     window.fullscreen = False
