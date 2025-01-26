@@ -259,8 +259,9 @@ class Phase2Scene(Entity):
         self.background = Entity(
             model='quad',
             texture='assets/water',
-            scale=(16, 9),
-            z=1
+            scale=(18, 10),
+            z=0.1,
+            
         )
 
         for data in self.player_data:
@@ -270,7 +271,7 @@ class Phase2Scene(Entity):
 
         # Configure camera
         camera.position = (0, 0, -15)
-        camera.fov = 60
+        camera.fov = 54
 
         self.color_display = Text(
             text="",
@@ -481,9 +482,19 @@ class Fish(Entity):
         self.z = clamp(self.z, -1, 0)
         self.color = color.white * (0.7 + (-self.z * 0.3))
         
-        # Screen wrapping
-        if abs(self.x) > 7.5: self.x = -self.x
-        if abs(self.y) > 4.5: self.y = -self.y
+        # Screen wrapping with proper edge detection
+        screen_width = window.aspect_ratio * 10  # Adjust based on camera FOV
+        screen_height = 10  # Adjust based on camera FOV
+        
+        if self.x > screen_width/2:
+            self.x = -screen_width/2
+        elif self.x < -screen_width/2:
+            self.x = screen_width/2
+            
+        if self.y > screen_height/2:
+            self.y = -screen_height/2
+        elif self.y < -screen_height/2:
+            self.y = screen_height/2
 
     def dash(self):
         """Trigger dash with visual effects"""
