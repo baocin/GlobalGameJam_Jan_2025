@@ -448,8 +448,7 @@ class Fish(Entity):
             thickness=0.1,
             min_spacing=0.2,  # Added minimum spacing between points
             update_frequency=0.05,  # Only update every 0.05 seconds
-            max_points=15  # Limit maximum number of trail points
-            max_points=10,  # Increase points for more detailed trail
+            max_points=15,  # Limit maximum number of trail points
             texture='assets/bubble.glb'  # Ensure this texture is suitable for bubbles
         )
         self.trail.enabled = False
