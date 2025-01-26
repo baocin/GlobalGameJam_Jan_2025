@@ -443,26 +443,26 @@ class Fish(Entity):
         
         # Random initial position and rotation
         self.position = (random.uniform(-7, 7), random.uniform(-4, 4), random.uniform(-1, 0))
-        self.rotation_y = random.uniform(0, 360)
+        self.rotation_z = random.uniform(0, 360)  # Changed from rotation_y to rotation_z
         
         # Player number display
         self.player_text = Text(text=str(player_num), parent=self, y=-0.2, 
                               color=color.white, scale=6, origin=(0,0), billboard=True)
 
     def update(self):
-        # Smooth rotation
-        self.rotation_y += self.rotation_direction * self.rotation_speed * time.dt
+        # Smooth rotation around Z-axis for direction
+        self.rotation_z += self.rotation_direction * self.rotation_speed * time.dt
         
-        # Tilt effect during rotation
+        # Tilt effect during rotation (using X-axis)
         if self.rotation_direction != 0:
             target_roll = -self.rotation_direction * 25
-            self.rotation_z = lerp(self.rotation_z, target_roll, time.dt * 8)
+            self.rotation_x = lerp(self.rotation_x, target_roll, time.dt * 8)
         else:
-            self.rotation_z = lerp(self.rotation_z, 0, time.dt * 8)
+            self.rotation_x = lerp(self.rotation_x, 0, time.dt * 8)
         
-        # Update movement direction
-        angle_rad = math.radians(self.rotation_y)
-        self.direction = Vec3(math.cos(angle_rad), math.sin(math.radians(self.rotation_z)), 0).normalized()
+        # Update movement direction based on Z rotation
+        angle_rad = math.radians(self.rotation_z)
+        self.direction = Vec3(math.cos(angle_rad), math.sin(angle_rad), 0).normalized()
         
         # Handle dash acceleration
         if self.is_dashing:
