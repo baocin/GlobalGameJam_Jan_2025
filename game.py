@@ -283,8 +283,9 @@ class Phase2Scene(Entity):
 
     def update(self):
         if held_keys['r']:
-            new_fish = Fish(player_num=1, generation=0)
-            self.fishes.append(new_fish)
+            if len(self.fishes) < 50:  # Only spawn if under 50 fish
+                new_fish = Fish(player_num=1, generation=0)
+                self.fishes.append(new_fish)
         
         if time.time() - self.start_time < 3:
             return
@@ -293,42 +294,44 @@ class Phase2Scene(Entity):
         spatial_grid = defaultdict(list)
         grid_size = 2  # 2x2 meter cells
         
-        # Bin fish into grid cells
-        for fish in self.fishes:
-            cell_x = int(fish.x // grid_size)
-            cell_y = int(fish.y // grid_size)
-            spatial_grid[(cell_x, cell_y)].append(fish)
-        
-        # Check collisions within same cell
-        for cell_fishes in spatial_grid.values():
-            for i, fish1 in enumerate(cell_fishes):
-                for fish2 in cell_fishes[i+1:]:
-                    if fish1.player_num == fish2.player_num:
-                        continue
-                        
-                    pair_key = tuple(sorted([id(fish1), id(fish2)]))
-                    
-                    if pair_key in self.collision_cooldown:
-                        if time.time() - self.collision_cooldown[pair_key] < 2:
+        # Only check collisions if less than 50 fish
+        if len(self.fishes) < 50:
+            # Bin fish into grid cells
+            for fish in self.fishes:
+                cell_x = int(fish.x // grid_size)
+                cell_y = int(fish.y // grid_size)
+                spatial_grid[(cell_x, cell_y)].append(fish)
+            
+            # Check collisions within same cell
+            for cell_fishes in spatial_grid.values():
+                for i, fish1 in enumerate(cell_fishes):
+                    for fish2 in cell_fishes[i+1:]:
+                        if fish1.player_num == fish2.player_num:
                             continue
                             
-                    # Calculate 2.5D distance with depth consideration
-                    depth_factor = 1 - abs(fish1.z - fish2.z)
-                    distance = (fish1.position - fish2.position).length()
-                    if distance * depth_factor < 1:
-                        new_gen = max(fish1.generation, fish2.generation) + 1
-                        if new_gen <= 5:  # Only spawn if generation would be 5 or less
-                            new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
-                            new_fish.position = fish1.position
-                            self.fishes.append(new_fish)
-                            
-                            self.collision_cooldown[pair_key] = time.time()
-                            for fish in self.fishes:
-                                if fish != new_fish:
-                                    pair_key = tuple(sorted([id(new_fish), id(fish)]))
-                                    self.collision_cooldown[pair_key] = time.time()
-                            
-                            print(f"Collision! Spawned new fish with generation {new_gen}")
+                        pair_key = tuple(sorted([id(fish1), id(fish2)]))
+                        
+                        if pair_key in self.collision_cooldown:
+                            if time.time() - self.collision_cooldown[pair_key] < 2:
+                                continue
+                                
+                        # Calculate 2.5D distance with depth consideration
+                        depth_factor = 1 - abs(fish1.z - fish2.z)
+                        distance = (fish1.position - fish2.position).length()
+                        if distance * depth_factor < 1:
+                            new_gen = max(fish1.generation, fish2.generation) + 1
+                            if new_gen <= 5:  # Only spawn if generation would be 5 or less
+                                new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
+                                new_fish.position = fish1.position
+                                self.fishes.append(new_fish)
+                                
+                                self.collision_cooldown[pair_key] = time.time()
+                                for fish in self.fishes:
+                                    if fish != new_fish:
+                                        pair_key = tuple(sorted([id(new_fish), id(fish)]))
+                                        self.collision_cooldown[pair_key] = time.time()
+                                
+                                print(f"Collision! Spawned new fish with generation {new_gen}")
         
         # Color detection with throttling
         if time.time() - self.last_process_time > self.process_interval:
