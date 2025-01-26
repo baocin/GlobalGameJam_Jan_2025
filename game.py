@@ -430,7 +430,7 @@ class Fish(Entity):
         self.base_speed = 0.1
         self.max_speed = 1.5
         self.current_speed = self.base_speed
-        self.rotation_speed = 1080  # Degrees per second
+        self.rotation_speed = 240
         self.dash_duration = 0.3
         
         # Movement state
@@ -440,8 +440,18 @@ class Fish(Entity):
         self.normal_scale = (1, 1, 1)
         self.dash_scale = (1.3, 0.7, 1.3)
         
-        # Visual effects
-        self.trail = TrailRenderer(parent=self, color=color.red, length=10, thickness=0.1)
+        # Optimized trail renderer
+        self.trail = TrailRenderer(
+            parent=self,
+            color=color.red,
+            length=5,  # Reduced from 10
+            thickness=0.1,
+            min_spacing=0.2,  # Added minimum spacing between points
+            update_frequency=0.05,  # Only update every 0.05 seconds
+            max_points=15  # Limit maximum number of trail points
+            max_points=10,  # Increase points for more detailed trail
+            texture='assets/bubble.glb'  # Ensure this texture is suitable for bubbles
+        )
         self.trail.enabled = False
         
         # Random initial position and rotation
