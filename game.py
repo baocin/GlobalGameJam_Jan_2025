@@ -256,7 +256,7 @@ class Phase2Scene(Entity):
         self.fishes = []
         self.color_detector = ColorDetector()
         self.red_cooldown = 0
-        self.blue_cooldown = 0
+        self.green_cooldown = 0
         self.collision_cooldown = {}  # Track collision cooldowns per fish pair
         self.start_time = time.time()  # Track when Phase2 starts
         
@@ -345,8 +345,8 @@ class Phase2Scene(Entity):
                             detected_color = self.color_detector.detect_color(face_roi, player_num)
                             if detected_color == 'red':
                                 self.handle_red_action(player_num)
-                            elif detected_color == 'blue':
-                                self.handle_blue_action(player_num)
+                            elif detected_color == 'green':
+                                self.handle_green_action(player_num)
                     except:
                         pass
 
@@ -356,8 +356,8 @@ class Phase2Scene(Entity):
             if fish.player_num == player_num:
                 fish.dash()
                 
-    def handle_blue_action(self, player_num):
-        print(f"Player {player_num} triggered blue action")
+    def handle_green_action(self, player_num):
+        print(f"Player {player_num} triggered green action")
         for fish in self.fishes:
             if fish.player_num == player_num:
                 fish.rotate(time.dt * 360)
@@ -368,32 +368,42 @@ class Phase2Scene(Entity):
 
 class ColorDetector:
     def __init__(self):
-        # Convert RGB targets to BGR for OpenCV
-        self.target_red = [50, 70, 140]  # RGB -> BGR
-        self.target_blue = [150, 50, 100]  # RGB -> BGR
-        self.color_threshold = 20  # Allowed color difference
-        
+        pass 
+    
     def detect_color(self, roi, player_num):
-        # Calculate percentage of pixels that are red/blue
-        pixels = roi.reshape(-1, 3)  # Reshape to list of pixels
-        total_pixels = len(pixels)
+        # Convert BGR to RGB
+        rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+        pixels = rgb_roi.reshape(-1, 3)  # Reshape to list of pixels
         
-        # Count pixels where red channel > 150 and other channels < 100
-        red_mask = (pixels[:, 2] > 150) & (pixels[:, 1] < 100) & (pixels[:, 0] < 100)
-        red_pixels = np.sum(red_mask)
-        red_percentage = red_pixels / total_pixels
+        # Calculate standard deviation for each channel
+        r_std = np.std(pixels[:, 0])
+        g_std = np.std(pixels[:, 1]) 
+        b_std = np.std(pixels[:, 2])
         
-        # Count pixels where blue channel > 120 and other channels < 100
-        blue_mask = (pixels[:, 0] > 120) & (pixels[:, 1] < 100) & (pixels[:, 2] < 100)
-        blue_pixels = np.sum(blue_mask)
-        blue_percentage = blue_pixels / total_pixels
+        # Calculate average standard deviation across channels
+        avg_std = (r_std + g_std + b_std) / 3
+        
+        # Only proceed if pixels are similar in color (low standard deviation)
+        if avg_std < 20:  # Threshold for color similarity
+            total_pixels = len(pixels)
+            
+            # Count pixels where red channel > 150 and other channels < 100
+            red_mask = (pixels[:, 0] > 120) & (pixels[:, 1] < 100) & (pixels[:, 2] < 100)
+            red_pixels = np.sum(red_mask)
+            red_percentage = red_pixels / total_pixels
+            
+            # Count pixels where green channel > 120 and other channels < 100
+            green_mask = (pixels[:, 1] > 120) & (pixels[:, 0] < 100) & (pixels[:, 2] < 100)
+            green_pixels = np.sum(green_mask)
+            green_percentage = green_pixels / total_pixels
 
-        print(f"Player {player_num} - Red percentage: {red_percentage}, Blue percentage: {blue_percentage}")
-        # If more than 50% of pixels are red/blue
-        if red_percentage > 0.85:
-            return 'red'
-        elif blue_percentage > 0.85:
-            return 'blue'
+            print(f"Player {player_num} - Red percentage: {red_percentage}, Green percentage: {green_percentage}")
+            
+            if red_percentage > 0.3:
+                return 'red'
+            elif green_percentage > 0.3:
+                return 'green'
+        
         return None
     
 class Fish(Entity):
