@@ -1,5 +1,6 @@
 from ursina import *
 from ursina.texture_importer import load_texture
+from ursina.prefabs.trail_renderer import TrailRenderer
 import cv2
 from PIL import Image
 import io
@@ -254,13 +255,23 @@ class Phase2Scene(Entity):
         self.last_process_time = 0
         self.process_interval = 1/30
 
-        self.background = Entity(model='quad', texture='assets/water', scale=(16, 9), z=1)
+        # Flat background
+        self.background = Entity(
+            model='quad',
+            texture='assets/water',
+            scale=(16, 9),
+            z=1
+        )
+
         for data in self.player_data:
             if data['texture']:
                 fish = Fish(player_num=data['player_num'], generation=0)
                 self.fishes.append(fish)
-                
-        # EditorCamera()
+
+        # Configure camera
+        camera.position = (0, 0, -15)
+        camera.fov = 60
+
         self.color_display = Text(
             text="",
             position=(0, 0.45),
@@ -300,8 +311,10 @@ class Phase2Scene(Entity):
                         if time.time() - self.collision_cooldown[pair_key] < 2:
                             continue
                             
+                    # Calculate 2.5D distance with depth consideration
+                    depth_factor = 1 - abs(fish1.z - fish2.z)
                     distance = (fish1.position - fish2.position).length()
-                    if distance < 1:
+                    if distance * depth_factor < 1:
                         new_gen = max(fish1.generation, fish2.generation) + 1
                         if new_gen <= 5:  # Only spawn if generation would be 5 or less
                             new_fish = Fish(player_num=fish1.player_num, generation=new_gen)
@@ -326,7 +339,6 @@ class Phase2Scene(Entity):
                 for data in self.player_data:
                     player_num = data['player_num']
                     bbox = data['bbox']
-                    
                     x = int(bbox.xmin * w)
                     y = int(bbox.ymin * h)
                     width = int(bbox.width * w)
@@ -335,36 +347,38 @@ class Phase2Scene(Entity):
                     if x >= 0 and y >= 0 and width > 0 and height > 0:
                         try:
                             face_roi = frame[y:y+height, x:x+width]
-                            if face_roi.size > 0:
-                                detected_color, red_pct, green_pct = self.color_detector.detect_color(face_roi, player_num)
-                                self.player_colors[player_num] = {'red': red_pct, 'green': green_pct}
-                                if detected_color == 'red':
-                                    self.handle_red_action(player_num)
-                                elif detected_color == 'green':
-                                    self.handle_green_action(player_num)
+                            detected_color, red_pct, green_pct = self.color_detector.detect_color(face_roi, player_num)
+                            self.player_colors[player_num] = {'red': red_pct, 'green': green_pct}
+                            
+                            # Update control states
+                            for fish in self.fishes:
+                                if fish.player_num == player_num:
+                                    if detected_color == 'red':
+                                        fish.dash()
+                                    elif detected_color == 'green':
+                                        fish.rotation_direction = 1 if green_pct > 50 else -1
+                                    else:
+                                        fish.rotation_direction = 0
                         except:
                             pass
-                            
-                color_text = ""
-                for player_num in sorted(self.player_colors.keys()):
-                    colors = self.player_colors[player_num]
-                    color_text += f"{player_num}: {colors['green']}% / {colors['red']}%   "
-                self.color_display.text = color_text
                 
-            self.last_process_time = time.time()
+                self.last_process_time = time.time()
     
     def handle_red_action(self, player_num):
         print(f"Player {player_num} triggered red action")
         for fish in self.fishes:
             if fish.player_num == player_num:
-                fish.position += 0.05
+                fish.dash()
                 
     def handle_green_action(self, player_num):
-        print(f"Player {player_num} triggered green action") 
+        print(f"Player {player_num} triggered green action")
         for fish in self.fishes:
             if fish.player_num == player_num:
-                # rotate in parallel with the screen
-                fish.rotation_y += 15
+                # Rotate based on face position in frame
+                if self.player_colors[player_num]['green'] > 50:
+                    fish.rotate(1)  # Clockwise
+                else:
+                    fish.rotate(-1)  # Counter-clockwise
 
     def on_destroy(self):
         if self.capture.isOpened():
@@ -401,90 +415,83 @@ class ColorDetector:
     
 class Fish(Entity):
     def __init__(self, player_num, generation=0, **kwargs):
-        model_files = {
-            0: 'assets/red_fish.glb',
-            1: 'assets/orange_fish.glb',
-            2: 'assets/yellow_fish.glb',
-            3: 'assets/green_fish.glb'
-        }
-        model_file = model_files.get(min(generation, 3))
+        model_files = {0: 'assets/red_fish.glb', 1: 'assets/orange_fish.glb', 
+                      2: 'assets/yellow_fish.glb', 3: 'assets/green_fish.glb'}
+        super().__init__(model=model_files.get(min(generation, 3), 'assets/red_fish.glb'), scale=1)
         
-        super().__init__(model=model_file, scale=1)
-        self.collider = None  # Disable complex collision mesh
-
         self.player_num = player_num
         self.generation = generation
         
-        # Initialize with random rotation around z axis
-        self.rotation_z = random.uniform(0, 360)
-        self.rotation_x = 90
+        # Movement parameters
+        self.base_speed = 0.1
+        self.max_speed = 1.5
+        self.current_speed = self.base_speed
+        self.rotation_speed = 1080  # Degrees per second
+        self.dash_duration = 0.3
         
-        # Set forward direction based on rotation
-        angle_rad = math.radians(self.rotation_z)
-        self.forward = Vec3(math.cos(angle_rad), math.sin(angle_rad), 0)
+        # Movement state
+        self.rotation_direction = 0
+        self.is_dashing = False
+        self.dash_end_time = 0
+        self.normal_scale = (1, 1, 1)
+        self.dash_scale = (1.3, 0.7, 1.3)
         
-        # Set initial speed in forward direction
-        self.speed = self.forward * 0.02
-        self.acceleration = 1.0
-        self.dash_duration = 0
+        # Visual effects
+        self.trail = TrailRenderer(parent=self, color=color.red, length=10, thickness=0.1)
+        self.trail.enabled = False
         
-        self.player_text = Text(
-            text=str(player_num),
-            parent=self,
-            y=-0.20,
-            color=color.white,
-            scale=6,
-            origin=(0,0)
-        )
-        self.player_text.billboard = True
+        # Random initial position and rotation
+        self.position = (random.uniform(-7, 7), random.uniform(-4, 4), random.uniform(-1, 0))
+        self.rotation_y = random.uniform(0, 360)
+        
+        # Player number display
+        self.player_text = Text(text=str(player_num), parent=self, y=-0.2, 
+                              color=color.white, scale=6, origin=(0,0), billboard=True)
 
     def update(self):
-        if self.dash_duration > 0:
-            self.acceleration = min(self.acceleration + 0.1, 3.0)
-            self.dash_duration -= time.dt
-            if self.dash_duration <= 0:
-                self.reset_speed()
-                
-        self.position += self.forward * self.speed * time.dt
+        # Smooth rotation
+        self.rotation_y += self.rotation_direction * self.rotation_speed * time.dt
         
-        if self.x > 7:
-            self.x = -7
-        elif self.x < -7:
-            self.x = 7
-        if self.y > 4:
-            self.y = -4
-        elif self.y < -4:
-            self.y = 4
-            
-    def dash(self):
-        world_forward = self.forward.rotate(self.rotation_z)
-        self.speed = world_forward.normalized() * 0.02
-        self.dash_duration = 0.5
+        # Tilt effect during rotation
+        if self.rotation_direction != 0:
+            target_roll = -self.rotation_direction * 25
+            self.rotation_z = lerp(self.rotation_z, target_roll, time.dt * 8)
+        else:
+            self.rotation_z = lerp(self.rotation_z, 0, time.dt * 8)
         
-    def reset_speed(self):
-        self.speed = self.speed.normalized() * 0.02
-        self.acceleration = 1.0
+        # Update movement direction
+        angle_rad = math.radians(self.rotation_y)
+        self.direction = Vec3(math.cos(angle_rad), math.sin(math.radians(self.rotation_z)), 0).normalized()
         
-    def rotate(self, direction):
-        self.rotation_z += 15 * direction * time.dt
+        # Handle dash acceleration
+        if self.is_dashing:
+            self.current_speed = lerp(self.current_speed, self.max_speed, time.dt * 15)
+            self.scale = lerp(self.scale, self.dash_scale, time.dt * 10)
+            self.trail.enabled = True
+        else:
+            self.current_speed = lerp(self.current_speed, self.base_speed, time.dt * 5)
+            self.scale = lerp(self.scale, self.normal_scale, time.dt * 10)
+            self.trail.enabled = False
+        
+        # Apply movement
+        self.position += self.direction * self.current_speed * time.dt
+        
+        # Depth-based effects
+        self.z += random.uniform(-0.01, 0.01)
+        self.z = clamp(self.z, -1, 0)
+        self.color = color.white * (0.7 + (-self.z * 0.3))
+        
+        # Screen wrapping
+        if abs(self.x) > 7.5: self.x = -self.x
+        if abs(self.y) > 4.5: self.y = -self.y
 
-    def look_at_closest_fish(self, fish_list):
-        if not fish_list:
-            return
-            
-        closest_fish = None
-        min_distance = float('inf')
-        for fish in fish_list:
-            if fish == self:
-                continue
-            distance = (fish.position - self.position).length()
-            if distance < min_distance:
-                min_distance = distance
-                closest_fish = fish
-                
-        if closest_fish:
-            self.look_at(closest_fish.position, axis='z')
-            
+    def dash(self):
+        """Trigger dash with visual effects"""
+        self.is_dashing = True
+        self.dash_end_time = time.time() + self.dash_duration
+        if not hasattr(self, 'dash_task') or self.dash_task.finished:
+            self.dash_task = invoke(setattr, self, 'is_dashing', False, delay=self.dash_duration)
+
 if __name__ == '__main__':
     window.vsync = False
     app = Ursina(
