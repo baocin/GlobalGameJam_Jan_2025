@@ -1,6 +1,7 @@
 from ursina import *
 from ursina.texture_importer import load_texture
 from ursina.prefabs.trail_renderer import TrailRenderer
+from ursina.prefabs.editor_camera import EditorCamera
 import cv2
 from PIL import Image
 import io
@@ -272,6 +273,9 @@ class Phase2Scene(Entity):
         # Configure camera
         camera.position = (0, 0, -15)
         camera.fov = 54
+        
+        # Add editor camera
+        self.editor_camera = EditorCamera()
 
         self.color_display = Text(
             text="",
@@ -439,6 +443,18 @@ class Fish(Entity):
         self.dash_end_time = 0
         self.normal_scale = (1, 1, 1)
         self.dash_scale = (1.3, 0.7, 1.3)
+        self.z -= 1
+        
+        # Add red direction arrow
+        self.direction_arrow = Entity(
+            parent=self,
+            model='arrow',
+            color=color.red,
+            scale=(0.5, 0.5, 0.5),
+            rotation_x=-90,  # Changed from rotation_z to rotation_x
+            position=(0.5, 0, 0),  # Position in front of the fish
+            z=-0.1  # Ensure the arrow renders above the fish model
+        )
         
         # Optimized trail renderer
         self.trail = TrailRenderer(
@@ -472,23 +488,25 @@ class Fish(Entity):
         else:
             self.rotation_x = lerp(self.rotation_x, 0, time.dt * 8)
         
-        # Update movement direction based on Z rotation
-        angle_rad = math.radians(self.rotation_z)
-        self.direction = Vec3(math.cos(angle_rad), math.sin(angle_rad), 0).normalized()
+        # Get movement direction from direction arrow
+        arrow_direction = Vec3(
+            self.direction_arrow.world_x - self.world_x,
+            self.direction_arrow.world_y - self.world_y,
+            self.direction_arrow.world_z - self.world_z
+        ).normalized()
         
         # Handle dash acceleration
         if self.is_dashing:
+            self.position += arrow_direction * self.current_speed * time.dt
             self.current_speed = lerp(self.current_speed, self.max_speed, time.dt * 15)
             self.scale = lerp(self.scale, self.dash_scale, time.dt * 10)
             self.trail.enabled = True
         else:
+            # Regular movement
+            self.position += arrow_direction * self.current_speed * time.dt
             self.current_speed = lerp(self.current_speed, self.base_speed, time.dt * 5)
             self.scale = lerp(self.scale, self.normal_scale, time.dt * 10)
             self.trail.enabled = False
-        
-        # Apply movement
-        self.position += self.direction * self.current_speed * time.dt
-        
         # Depth-based effects
         self.z += random.uniform(-0.01, 0.01)
         self.z = clamp(self.z, -1, 0)
