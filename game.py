@@ -329,6 +329,9 @@ class Phase2Scene(Entity):
         self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
+        # Play background music
+        self.bg_audio = Audio('assets/65077_bg_audio.mp3', loop=True, autoplay=True)
+        
         self.fishes = []
         self.color_detector = ColorDetector()
         self.red_cooldown = 0
