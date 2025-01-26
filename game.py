@@ -254,7 +254,8 @@ class Phase2Scene(Entity):
         self.start_time = time.time()  # Track when Phase2 starts
         
         # Create aquarium background
-        self.background = Entity(model='quad', texture='assets/water', scale=(16, 9))
+        self.background = Entity(model='quad', texture='assets/water', scale=(16, 9), z=1)
+        # self.background = Entity(model='quad', texture='assets/aquarium_background_2.mp4', scale=(16, 9), z=1)
         
         # Spawn fish
         for data in self.player_data:
@@ -404,11 +405,11 @@ class Fish(Entity):
         self.player_num = player_num
         self.generation = generation
         # Calculate initial direction vector based on model's left side
+        self.forward = Vec3(1, 0, 0)  # Model faces right initially
         self.speed = Vec3(random.uniform(-1, 1), random.uniform(-1, 1), 0).normalized() * 0.02
-        # self.forward = Vec3(0, 0, -1)  # Left side of model in local space
         self.acceleration = 1.0
         self.dash_duration = 0
-        self.position.z = 4
+        self.rotation_x = 90
         
         # Add text entity to show player number
         self.player_text = Text(
@@ -418,8 +419,8 @@ class Fish(Entity):
             color=color.white,
             scale=6,
             origin=(0,0),
-            background=False,
-            # background_color=color.black66
+            # background=True,
+            # background_color=color.bla
         )
         self.player_text.billboard = True  # Make text always face camera
 
@@ -446,13 +447,11 @@ class Fish(Entity):
     def dash(self):
         # Convert local forward vector to world space based on current rotation
         # world_forward = self.forward.rotate(self.rotation_z)
-        # self.speed = world_forward.normalized() * 0.02
-        
-        self.speed = self.speed.normalized() * 0.02
+        world_forward = self.forward.rotate(self.rotation_z)
+        self.speed = world_forward.normalized() * 0.02
+        # self.speed = self.forward * 0.02
         
         self.dash_duration = 0.5
-        # Animate rotation during dash
-        # self.animate('rotation_y', self.rotation_y + 360, duration=0.5, curve=curve.in_out_expo)
         
     def reset_speed(self):
         self.speed = self.speed.normalized() * 0.02
@@ -460,8 +459,9 @@ class Fish(Entity):
         
     def rotate(self, direction):
         self.rotation_z += 15 * direction * time.dt
-        # self.animate('rotation_y', self.rotation_y + 360, duration=0.5, curve=curve.in_out_expo)
-        # self.look_at_closest_fish(self.fishes)
+        # Update speed direction when rotating
+        # world_forward = self.forward.rotate(self.rotation_z)
+        # self.speed = world_forward.normalized() * 0.02
 
     def look_at_closest_fish(self, fish_list):
         if not fish_list:
