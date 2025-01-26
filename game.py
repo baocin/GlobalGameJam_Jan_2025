@@ -18,6 +18,7 @@ class Phase1Scene(Entity):
         self.player_data = []
         self.debug_entities = []
         self.face_detection_active = True
+        self.player_colors = {}  # Store color percentages per player
         
         # Set camera resolution higher to better detect faces
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 10000)  # Will set to max supported width
@@ -141,6 +142,23 @@ class Phase1Scene(Entity):
         )
         self.debug_entities.append(panel)
 
+        # Add color percentage display at top of screen
+        color_text = ""
+        for player_num, colors in self.player_colors.items():
+            color_text += f"Player {player_num}: Green {colors['green']}% / Red {colors['red']}%   "
+        
+        color_display = Text(
+            parent=self,
+            text=color_text,
+            position=(0, 0.9),
+            origin=(0, 0),
+            color=color.white,
+            scale=3,
+            font='VeraMono.ttf',
+            z=0
+        )
+        self.debug_entities.append(color_display)
+
         # Debug display setup
         grid_size = max(1, int(len(self.player_data) ** 0.5))
         spacing = 1.2  # Increased spacing between faces
@@ -259,6 +277,7 @@ class Phase2Scene(Entity):
         self.green_cooldown = 0
         self.collision_cooldown = {}  # Track collision cooldowns per fish pair
         self.start_time = time.time()  # Track when Phase2 starts
+        self.player_colors = {}  # Store color percentages per player
         
         # Create aquarium background
         self.background = Entity(model='quad', texture='assets/water', scale=(16, 9), z=1)
@@ -272,6 +291,15 @@ class Phase2Scene(Entity):
                 
         # Add editor camera
         EditorCamera()
+
+        # Add color percentage display
+        self.color_display = Text(
+            text="",
+            position=(0, 0.45),
+            origin=(0, 0),
+            color=color.white,
+            scale=2
+        )
 
     def update(self):
         # Check for 'r' key to spawn new fish for player 1
@@ -342,13 +370,22 @@ class Phase2Scene(Entity):
                         # Extract and process face region
                         face_roi = frame[y:y+height, x:x+width]
                         if face_roi.size > 0:
-                            detected_color = self.color_detector.detect_color(face_roi, player_num)
+                            detected_color, red_pct, green_pct = self.color_detector.detect_color(face_roi, player_num)
+                            # Update player color percentages
+                            self.player_colors[player_num] = {'red': red_pct, 'green': green_pct}
                             if detected_color == 'red':
                                 self.handle_red_action(player_num)
                             elif detected_color == 'green':
                                 self.handle_green_action(player_num)
                     except:
                         pass
+                        
+            # Update color percentage display
+            color_text = ""
+            for player_num in sorted(self.player_colors.keys()):
+                colors = self.player_colors[player_num]
+                color_text += f"{player_num}: {colors['green']}% / {colors['red']}%   "
+            self.color_display.text = color_text
 
     def handle_red_action(self, player_num):
         print(f"Player {player_num} triggered red action")
@@ -385,26 +422,42 @@ class ColorDetector:
         
         # Only proceed if pixels are similar in color (low standard deviation)
         if avg_std < 20:  # Threshold for color similarity
+            # Convert to HSV color space for better color detection
+            hsv_roi = cv2.cvtColor(rgb_roi, cv2.COLOR_RGB2HSV)
             total_pixels = len(pixels)
             
-            # Count pixels where red channel > 150 and other channels < 100
-            red_mask = (pixels[:, 0] > 120) & (pixels[:, 1] < 100) & (pixels[:, 2] < 100)
-            red_pixels = np.sum(red_mask)
-            red_percentage = red_pixels / total_pixels
+            # Define HSV ranges for red and green
+            # Red has two ranges in HSV since it wraps around
+            lower_red1 = np.array([0, 120, 100])  # Increased saturation threshold
+            upper_red1 = np.array([10, 255, 255])
+            lower_red2 = np.array([170, 120, 100])  # Increased saturation threshold
+            upper_red2 = np.array([180, 255, 255])
             
-            # Count pixels where green channel > 120 and other channels < 100
-            green_mask = (pixels[:, 1] > 120) & (pixels[:, 0] < 100) & (pixels[:, 2] < 100)
-            green_pixels = np.sum(green_mask)
-            green_percentage = green_pixels / total_pixels
+            # Green range in HSV
+            lower_green = np.array([40, 120, 100])  # Increased saturation threshold
+            upper_green = np.array([80, 255, 255])
+            
+            # Create masks for red and green
+            red_mask1 = cv2.inRange(hsv_roi, lower_red1, upper_red1)
+            red_mask2 = cv2.inRange(hsv_roi, lower_red2, upper_red2)
+            red_mask = red_mask1 + red_mask2
+            green_mask = cv2.inRange(hsv_roi, lower_green, upper_green)
+            
+            # Calculate percentages
+            red_pixels = np.sum(red_mask > 0)
+            green_pixels = np.sum(green_mask > 0)
+            red_percentage = (red_pixels / total_pixels) * 100
+            green_percentage = (green_pixels / total_pixels) * 100
 
-            print(f"Player {player_num} - Red percentage: {red_percentage}, Green percentage: {green_percentage}")
+            print(f"Player {player_num} - Red: {int(red_percentage)}%, Green: {int(green_percentage)}%")
             
-            if red_percentage > 0.3:
-                return 'red'
-            elif green_percentage > 0.3:
-                return 'green'
-        
-        return None
+            # Increased thresholds and added mutual exclusion
+            if red_percentage > 40 and red_percentage > green_percentage:
+                return 'red', int(red_percentage), int(green_percentage)
+            elif green_percentage > 40 and green_percentage > red_percentage:
+                return 'green', int(red_percentage), int(green_percentage)
+            return None, int(red_percentage), int(green_percentage)
+        return None, 0, 0
     
 class Fish(Entity):
     def __init__(self, player_num, generation=0, **kwargs):
