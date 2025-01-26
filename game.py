@@ -25,6 +25,7 @@ class Bubble(Entity):
                 scale=0.2,
                 **kwargs
             )
+            self.model = texture  # Explicitly set model
         else:
             super().__init__(
                 model='quad',
@@ -36,23 +37,44 @@ class Bubble(Entity):
         self.billboard = True
         self.direction = direction.normalized()
         self.speed = speed
-        self.lifespan = 1.5
+        # Randomize lifespan between 1-2 seconds with normal distribution
+        self.lifespan = random.gauss(1.5, 0.2)  # Mean 1.5s, std dev 0.2s
+        self.lifespan = max(1.0, min(2.0, self.lifespan))  # Clamp between 1-2s
         self.start_time = time.time()
         self.direction_z = random.uniform(0.05, 0.15)
-        self.color = color.white
+        self.color = color.rgba(1, 1, 1, 0.7)  # White with 70% opacity
 
     def update(self):
+        # Add bobbing motion
         self.position += self.direction * self.speed * time.dt
         self.z += self.direction_z * time.dt
-        self.rotation_z += 50 * time.dt
+        self.y += math.sin(time.time() * 3) * 0.01  # Gentle bobbing up and down
         
+        # Add slight random wobble
+        self.x += random.uniform(-0.02, 0.02) * time.dt
+        
+        # Slow down over time like real bubbles
+        self.speed = lerp(self.speed, self.speed * 0.5, time.dt)
+        
+        # Rotate gently
+        self.rotation_z += 30 * time.dt
+        
+        # Fade out and grow slightly before popping
         elapsed = time.time() - self.start_time
         if elapsed >= self.lifespan:
             destroy(self)
         else:
+            # Bubble gets slightly bigger as it rises
+            growth = min(1.2, 1 + (elapsed / self.lifespan) * 0.3)
+            base_scale = 0.2 * growth
+            
+            # Add pulsing effect
+            pulse = math.sin(time.time() * 4) * 0.05
+            self.scale = base_scale * (1 + pulse)
+            
+            # Fade out
             alpha = 1 - (elapsed / self.lifespan)
-            self.color = color.white * alpha
-            self.scale = 0.2 * (1 - (elapsed / self.lifespan) * 0.5)
+            self.color = color.rgba(1, 1, 1, alpha * 0.7)
 
 class Phase1Scene(Entity):
     def __init__(self, **kwargs):
@@ -294,7 +316,7 @@ class Phase2Scene(Entity):
         self.player_colors = {}
         self.last_process_time = 0
         self.process_interval = 1/30
-        self.bubble_texture = load_texture('assets/bubble')
+        self.bubble_texture = load_texture('assets/bubble.png')
 
         # Flat background
         self.background = Entity(
