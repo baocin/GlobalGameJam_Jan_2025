@@ -10,10 +10,50 @@ import numpy as np
 import random
 import time
 import os
+import math
 from collections import defaultdict
 
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
+
+class Bubble(Entity):
+    def __init__(self, position, direction, speed=1, texture=None, **kwargs):
+        # If texture is a 3D model, use it as the model instead of texture
+        if texture and isinstance(texture, str) and texture.endswith('.glb'):
+            super().__init__(
+                model=texture,
+                position=position,
+                scale=0.2,
+                **kwargs
+            )
+        else:
+            super().__init__(
+                model='quad',
+                texture=texture,
+                position=position,
+                scale=0.2,
+                **kwargs
+            )
+        self.billboard = True
+        self.direction = direction.normalized()
+        self.speed = speed
+        self.lifespan = 1.5
+        self.start_time = time.time()
+        self.direction_z = random.uniform(0.05, 0.15)
+        self.color = color.white
+
+    def update(self):
+        self.position += self.direction * self.speed * time.dt
+        self.z += self.direction_z * time.dt
+        self.rotation_z += 50 * time.dt
+        
+        elapsed = time.time() - self.start_time
+        if elapsed >= self.lifespan:
+            destroy(self)
+        else:
+            alpha = 1 - (elapsed / self.lifespan)
+            self.color = color.white * alpha
+            self.scale = 0.2 * (1 - (elapsed / self.lifespan) * 0.5)
 
 class Phase1Scene(Entity):
     def __init__(self, **kwargs):
@@ -255,6 +295,7 @@ class Phase2Scene(Entity):
         self.player_colors = {}
         self.last_process_time = 0
         self.process_interval = 1/30
+        self.bubble_texture = load_texture('assets/bubble')
 
         # Flat background
         self.background = Entity(
@@ -267,7 +308,7 @@ class Phase2Scene(Entity):
 
         for data in self.player_data:
             if data['texture']:
-                fish = Fish(player_num=data['player_num'], generation=0)
+                fish = Fish(player_num=data['player_num'], generation=0, bubble_texture=self.bubble_texture)
                 self.fishes.append(fish)
 
         # Configure camera
@@ -422,13 +463,14 @@ class ColorDetector:
         return None, int(red_pct), int(green_pct)
     
 class Fish(Entity):
-    def __init__(self, player_num, generation=0, **kwargs):
+    def __init__(self, player_num, generation=0, bubble_texture=None, **kwargs):
         model_files = {0: 'assets/red_fish.glb', 1: 'assets/orange_fish.glb', 
                       2: 'assets/yellow_fish.glb', 3: 'assets/green_fish.glb'}
         super().__init__(model=model_files.get(min(generation, 3), 'assets/red_fish.glb'), scale=1)
         
         self.player_num = player_num
         self.generation = generation
+        self.bubble_texture = bubble_texture
         
         # Movement parameters
         self.base_speed = 0.1
@@ -532,6 +574,38 @@ class Fish(Entity):
         self.dash_end_time = time.time() + self.dash_duration
         if not hasattr(self, 'dash_task') or self.dash_task.finished:
             self.dash_task = invoke(setattr, self, 'is_dashing', False, delay=self.dash_duration)
+        self.spawn_bubbles()
+
+    def spawn_bubbles(self):
+        num_bubbles = 8
+        # Get direction from direction arrow (opposite of dash direction)
+        arrow_direction = Vec3(
+            self.direction_arrow.world_x - self.world_x,
+            self.direction_arrow.world_y - self.world_y,
+            self.direction_arrow.world_z - self.world_z
+        ).normalized()
+        # Reverse direction for bubbles
+        head_dir = -arrow_direction
+        spread_angle = 45
+        
+        for _ in range(num_bubbles):
+            angle = math.radians(random.uniform(-spread_angle, spread_angle))
+            cos_ang = math.cos(angle)
+            sin_ang = math.sin(angle)
+            dir_x = head_dir.x * cos_ang - head_dir.y * sin_ang
+            dir_y = head_dir.x * sin_ang + head_dir.y * cos_ang
+            direction = Vec3(dir_x, dir_y, 0).normalized()
+            direction += Vec3(random.uniform(-0.3,0.3), random.uniform(-0.3,0.3), 0)
+            direction = direction.normalized()
+            
+            bubble = Bubble(
+                position=self.position + head_dir*0.5,
+                direction=direction,
+                speed=random.uniform(2,4),
+                texture=self.bubble_texture,
+                parent=scene
+            )
+            bubble.z = self.z - random.uniform(0.1,0.3)
 
 if __name__ == '__main__':
     window.vsync = False
