@@ -17,22 +17,30 @@ mp_drawing = mp.solutions.drawing_utils
 
 # Global player data
 player_data = []
+bubble_texture = None
+
 
 class Bubble(Entity):
-    def __init__(self, position, direction, speed=1, texture=None, **kwargs):
+    def __init__(self, position, direction, speed=1, **kwargs):
+        global bubble_texture
+        
+        if bubble_texture is None:
+            bubble_texture = load_texture('assets/bubble.png')
+
+
         # If texture is a 3D model, use it as the model instead of texture
-        if texture and isinstance(texture, str) and texture.endswith('.glb'):
+        if bubble_texture and isinstance(bubble_texture, str) and bubble_texture.endswith('.glb'):
             super().__init__(
-                model=texture,
+                model=bubble_texture,
                 position=position,
                 scale=0.2,
                 **kwargs
             )
-            self.model = texture  # Explicitly set model
+            self.model = bubble_texture  # Explicitly set model
         else:
             super().__init__(
                 model='quad',
-                texture=texture,
+                texture=bubble_texture,
                 position=position,
                 scale=0.2,
                 **kwargs
@@ -341,7 +349,6 @@ class Phase2Scene(Entity):
         self.player_colors = {}
         self.last_process_time = 0
         self.process_interval = 1/30
-        self.bubble_texture = load_texture('assets/bubble.png')
 
         # Flat background
         self.background = Entity(
@@ -354,7 +361,7 @@ class Phase2Scene(Entity):
 
         for data in self.player_data:
             if data['texture']:
-                fish = Fish(player_num=data['player_num'], generation=0, bubble_texture=self.bubble_texture)
+                fish = Fish(player_num=data['player_num'], generation=0)
                 self.fishes.append(fish)
 
         # Configure camera
@@ -509,7 +516,7 @@ class ColorDetector:
         print(f"Player {player_num} - Red: {int(red_pct)}%, Green: {int(green_pct)}%")
         
         # Lower threshold for green detection
-        if red_pct > 30 and red_pct > green_pct:
+        if red_pct > 35 and red_pct > green_pct:
             return 'red', int(red_pct), int(green_pct)
         elif green_pct > 20 and green_pct > red_pct:  # Lower threshold for green
             return 'green', int(red_pct), int(green_pct)
@@ -526,7 +533,6 @@ class Fish(Entity):
         self.parent1 = parent1
         self.parent2 = parent2
         self.children = []
-        self.bubble_texture = bubble_texture
         
         # Add self to parents' children lists
         if parent1:
@@ -602,8 +608,8 @@ class Fish(Entity):
         self.color = color.white * (0.7 + (-self.z * 0.3))
         
         # Screen wrapping with proper edge detection
-        screen_width = window.aspect_ratio * 10  # Adjust based on camera FOV
-        screen_height = 10  # Adjust based on camera FOV
+        screen_width = window.aspect_ratio * 9.5  # Adjust based on camera FOV
+        screen_height = 9.5  # Adjust based on camera FOV
         
         if self.x > screen_width/2:
             self.x = -screen_width/2
@@ -649,7 +655,6 @@ class Fish(Entity):
                 position=self.position + head_dir*0.5,
                 direction=direction,
                 speed=random.uniform(2,4),
-                texture=self.bubble_texture,
                 parent=scene
             )
             bubble.z = self.z - random.uniform(0.1,0.3)
