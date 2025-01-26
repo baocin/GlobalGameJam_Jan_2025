@@ -2,3 +2,9 @@
 venv/
 
 .DS_Store
+
+build/
+
+Archive.zip
+
+windows.zip
